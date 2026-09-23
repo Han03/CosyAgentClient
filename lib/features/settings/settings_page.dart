@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../../app/theme.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_exception.dart';
 import '../../providers/app_providers.dart';
+import '../../widgets/gradient_button.dart';
 
-/// 设置页：服务地址 / API Key / 连通性测试。
+/// 设置页：服务地址 / API Key / 连通性测试，分组卡片。
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
@@ -17,6 +19,7 @@ class SettingsPage extends ConsumerStatefulWidget {
 class _SettingsPageState extends ConsumerState<SettingsPage> {
   final _baseUrl = TextEditingController();
   final _apiKey = TextEditingController();
+  bool _mockEnabled = false;
   String? _testResult;
   bool _testing = false;
 
@@ -28,8 +31,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   Future<void> _load() async {
     final settings = await ref.read(settingsProvider.future);
+    if (!mounted) return;
     _baseUrl.text = settings.baseUrl;
     _apiKey.text = settings.apiKey;
+    _mockEnabled = settings.mockEnabled;
+    setState(() {});
   }
 
   Future<void> _save() async {
@@ -40,6 +46,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     } else {
       await storage.delete(key: 'cosy.apiKey');
     }
+    await storage.write(key: 'cosy.mockEnabled', value: _mockEnabled.toString());
     ref.invalidate(settingsProvider);
     ref.invalidate(apiClientProvider);
     if (mounted) {
@@ -82,55 +89,149 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final success = _testResult?.startsWith('连接成功') ?? false;
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          TextField(
-            controller: _baseUrl,
-            decoration: const InputDecoration(
-              labelText: '服务地址',
-              hintText: 'http://localhost:8080',
-              helperText: '移动端真机请填局域网/线上地址',
-            ),
-          ),
-          TextField(
-            controller: _apiKey,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'API Key（X-API-Key，可选）',
-              helperText: '服务端配置 COSY_AGENT_API_KEY 后必填',
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
             children: [
-              FilledButton(
-                onPressed: _save,
-                child: const Text('保存配置'),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('服务连接',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: _baseUrl,
+                        decoration: const InputDecoration(
+                          labelText: '服务地址',
+                          hintText: 'http://localhost:28080',
+                          helperText: '移动端真机请填局域网/线上地址',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _apiKey,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'API Key（X-API-Key，可选）',
+                          helperText: '服务端配置 COSY_AGENT_API_KEY 后必填',
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          GradientButton(
+                            label: '保存配置',
+                            icon: Icons.save_outlined,
+                            onPressed: _save,
+                          ),
+                          const SizedBox(width: 10),
+                          OutlinedButton(
+                            onPressed: _testing ? null : _test,
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.circular(AppTheme.radiusMd),
+                              ),
+                            ),
+                            child: Text(_testing ? '测试中…' : '测试连接'),
+                          ),
+                        ],
+                      ),
+                      if (_testResult != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: (success
+                                      ? Colors.green
+                                      : theme.colorScheme.error)
+                                  .withValues(alpha: 0.10),
+                              borderRadius:
+                                  BorderRadius.circular(AppTheme.radiusMd),
+                            ),
+                            child: Text(
+                              _testResult!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: success
+                                    ? Colors.green.shade400
+                                    : theme.colorScheme.error,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _testing ? null : _test,
-                child: Text(_testing ? '测试中…' : '测试连接'),
+              const SizedBox(height: 14),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('运行模式',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 4),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Mock 模式'),
+                        subtitle: const Text(
+                            '开启后所有对话请求携带 X-Cosy-Mock: true，'
+                            '由服务端模拟 LLM 全链路（无需真实模型 Key）；'
+                            '关闭时不携带该请求头，回退服务端全局配置'),
+                        value: _mockEnabled,
+                        onChanged: (v) => setState(() => _mockEnabled = v),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('说明',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 10),
+                      Text(
+                        '· Mock 模式：客户端开关（请求级 X-Cosy-Mock）或服务端 '
+                        'COSY_AGENT_MOCK_ENABLED=true 均可无 Key 演示全链路\n'
+                        '· 鉴权：配置 API Key 后所有 /api/** 请求自动携带 X-API-Key\n'
+                        '· 401 时请回本页核对 Key 与服务地址',
+                        style: TextStyle(
+                            fontSize: 12,
+                            height: 1.6,
+                            color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
-          if (_testResult != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(_testResult!, style: const TextStyle(fontSize: 12)),
-            ),
-          const Divider(height: 32),
-          const Text('提示', style: TextStyle(fontWeight: FontWeight.w600)),
-          const Text(
-            '· Mock 模式：服务端设 COSY_AGENT_MOCK_ENABLED=true 可无 Key 演示全链路\n'
-            '· 鉴权：配置 API Key 后所有 /api/** 请求自动携带 X-API-Key\n'
-            '· 401 时请回本页核对 Key 与服务地址',
-            style: TextStyle(fontSize: 12),
-          ),
-        ],
+        ),
       ),
     );
   }

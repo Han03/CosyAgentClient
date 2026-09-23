@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/theme.dart';
 import '../../core/network/api_exception.dart';
 import '../../models/agent_message.dart';
 import '../../models/agent_result.dart';
 import '../../providers/app_providers.dart';
 
-/// 对话页：消息流 + 输入框 + 工具调用轨迹（折叠）+ 断点恢复。
+/// 对话页：仿豆包消息流（空状态 / 气泡 / 工具轨迹 / 输入胶囊）。
 class ChatPage extends ConsumerStatefulWidget {
   final String sessionId;
 
@@ -19,6 +20,7 @@ class ChatPage extends ConsumerStatefulWidget {
 
 class _ChatPageState extends ConsumerState<ChatPage> {
   final _controller = TextEditingController();
+  final _scroll = ScrollController();
   final List<AgentMessage> _messages = [];
   final Set<int> _expanded = {};
   bool _sending = false;
@@ -31,6 +33,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _sending = true;
     });
     _controller.clear();
+    _scrollToBottom();
 
     try {
       final repo = await ref.read(chatRepositoryProvider.future);
@@ -44,6 +47,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         _lastTaskId = result.taskId;
         _sending = false;
       });
+      _scrollToBottom();
     } on Exception catch (e) {
       if (!mounted) return;
       setState(() {
@@ -52,6 +56,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             content: e is ApiException ? e.message : '请求失败，请检查服务端'));
         _sending = false;
       });
+      _scrollToBottom();
     }
   }
 
@@ -68,6 +73,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         _lastTaskId = result.taskId;
         _sending = false;
       });
+      _scrollToBottom();
     } on Exception catch (e) {
       if (!mounted) return;
       setState(() {
@@ -76,12 +82,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             content: e is ApiException ? e.message : '恢复失败'));
         _sending = false;
       });
+      _scrollToBottom();
     }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.animateTo(
+        _scroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -89,6 +108,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: true,
         title: Text('会话 ${widget.sessionId}'),
         actions: [
           if (_lastTaskId != null)
@@ -106,46 +126,46 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: _messages.length + (_sending ? 1 : 0),
-              itemBuilder: (context, i) {
-                if (i == _messages.length) {
-                  return const _ThinkingTile();
-                }
-                return _MessageTile(
-                  message: _messages[i],
-                  expanded: _expanded.contains(i),
-                  onToggle: () => setState(() {
-                    if (!_expanded.remove(i)) _expanded.add(i);
-                  }),
-                );
-              },
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: _messages.isEmpty && !_sending
+                    ? const _EmptyState()
+                    : ListView.builder(
+                        controller: _scroll,
+                        padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
+                        itemCount:
+                            _messages.length + (_sending ? 1 : 0),
+                        itemBuilder: (context, i) {
+                          if (i == _messages.length) {
+                            return const _ThinkingTile();
+                          }
+                          return _MessageTile(
+                            message: _messages[i],
+                            expanded: _expanded.contains(i),
+                            onToggle: () => setState(() {
+                              if (!_expanded.remove(i)) _expanded.add(i);
+                            }),
+                          );
+                        },
+                      ),
+              ),
             ),
           ),
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      enabled: !_sending,
-                      minLines: 1,
-                      maxLines: 4,
-                      decoration: const InputDecoration(
-                        hintText: '输入任务描述，如：现在几点？',
-                      ),
-                      onSubmitted: _send,
-                    ),
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+                  child: _InputBar(
+                    controller: _controller,
+                    enabled: !_sending,
+                    onSend: () => _send(_controller.text),
                   ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    icon: const Icon(Icons.send),
-                    onPressed: _sending ? null : () => _send(_controller.text),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -155,6 +175,123 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 }
 
+/// 空状态：品牌图标 + 开场白。
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              gradient: AppTheme.brandGradient,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.brand.withValues(alpha: 0.35),
+                  blurRadius: 28,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            child: const Icon(Icons.auto_awesome,
+                size: 34, color: Colors.white),
+          ),
+          const SizedBox(height: 20),
+          Text('有什么可以帮你？',
+              style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface)),
+          const SizedBox(height: 8),
+          Text('输入任务描述，Agent 将自主规划并调用工具完成',
+              style: TextStyle(
+                  fontSize: 13, color: theme.colorScheme.onSurfaceVariant)),
+        ],
+      ),
+    );
+  }
+}
+
+/// 输入栏：胶囊填充 + 渐变发送按钮。
+class _InputBar extends StatelessWidget {
+  final TextEditingController controller;
+  final bool enabled;
+  final VoidCallback onSend;
+
+  const _InputBar({
+    required this.controller,
+    required this.enabled,
+    required this.onSend,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        border: Border.all(
+            color: theme.colorScheme.outline.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: controller,
+              enabled: enabled,
+              minLines: 1,
+              maxLines: 4,
+              style: const TextStyle(fontSize: 14),
+              decoration: const InputDecoration(
+                hintText: '输入任务描述，如：现在几点？',
+                filled: false,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              onSubmitted: (_) => onSend(),
+            ),
+          ),
+          const SizedBox(width: 6),
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: Material(
+              color: enabled ? null : theme.colorScheme.surfaceContainer,
+              shape: const CircleBorder(),
+              child: Ink(
+                decoration: BoxDecoration(
+                  gradient: enabled ? AppTheme.brandGradient : null,
+                  shape: BoxShape.circle,
+                ),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: enabled ? onSend : null,
+                  child: const Icon(Icons.arrow_upward_rounded,
+                      size: 20, color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 消息气泡：用户右（渐变蓝底）/ AI 左（灰底）；工具轨迹窄卡。
 class _MessageTile extends StatelessWidget {
   final AgentMessage message;
   final bool expanded;
@@ -168,31 +305,57 @@ class _MessageTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final isUser = message.role == 'USER';
-    final content = message.content ?? '';
-    final Widget body = message.isTool
-        ? _ToolBubble(message: message, expanded: expanded, onToggle: onToggle)
-        : Text(content);
-
+    if (message.isTool) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: _ToolBubble(
+            message: message, expanded: expanded, onToggle: onToggle),
+      );
+    }
+    final bubbleColor = isUser
+        ? AppTheme.brandGradient
+        : LinearGradient(
+            colors: [
+              theme.colorScheme.surfaceContainerHigh,
+              theme.colorScheme.surfaceContainerHigh,
+            ],
+          );
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.78),
-        decoration: BoxDecoration(
-          color: isUser
-              ? Theme.of(context).colorScheme.primaryContainer
-              : Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
+          maxWidth: MediaQuery.of(context).size.width * 0.72,
         ),
-        child: body,
+        decoration: BoxDecoration(
+          gradient: bubbleColor,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(AppTheme.radiusMd),
+            topRight: const Radius.circular(AppTheme.radiusMd),
+            bottomLeft: Radius.circular(isUser ? AppTheme.radiusMd : 4),
+            bottomRight: Radius.circular(isUser ? 4 : AppTheme.radiusMd),
+          ),
+        ),
+        child: Text(
+          message.content ?? '',
+          style: TextStyle(
+            fontSize: 14,
+            height: 1.5,
+            color: isUser
+                ? Colors.white
+                : theme.colorScheme.onSurface,
+          ),
+        ),
       ),
     );
   }
 }
 
+/// 工具调用轨迹卡（可展开）。
 class _ToolBubble extends StatelessWidget {
   final AgentMessage message;
   final bool expanded;
@@ -206,55 +369,93 @@ class _ToolBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final toolName = message.toolName ?? 'tool';
-    return InkWell(
-      onTap: onToggle,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.construction, size: 14),
-              const SizedBox(width: 4),
-              Text('调用工具 $toolName', style: const TextStyle(fontSize: 12)),
-              Icon(expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 16),
-            ],
-          ),
-          if (expanded)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                message.content ?? '',
-                style: const TextStyle(fontSize: 12),
-              ),
+    final color = theme.colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Material(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        child: InkWell(
+          onTap: onToggle,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          child: Container(
+            width: 300,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.construction, size: 14, color: color),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '调用工具 · $toolName',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: theme.colorScheme.onSurface),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Icon(
+                      expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      size: 16,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
+                if (expanded)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      message.content ?? '',
+                      style: TextStyle(
+                          fontSize: 12,
+                          height: 1.4,
+                          color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ),
+              ],
             ),
-        ],
+          ),
+        ),
       ),
     );
   }
 }
 
+/// Agent 执行中指示。
 class _ThinkingTile extends StatelessWidget {
   const _ThinkingTile();
 
   @override
   Widget build(BuildContext context) {
-    return const Align(
+    final theme = Theme.of(context);
+    return Align(
       alignment: Alignment.centerLeft,
       child: Padding(
-        padding: EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
               width: 14,
               height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: theme.colorScheme.primary,
+              ),
             ),
-            SizedBox(width: 8),
-            Text('Agent 执行中…', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 8),
+            Text('Agent 执行中…',
+                style: TextStyle(
+                    fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
           ],
         ),
       ),

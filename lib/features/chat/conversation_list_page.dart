@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-/// 会话列表：本地会话分组（本期为演示骨架，后续接 Hive 缓存）。
+import '../../app/theme.dart';
+import '../../widgets/session_card.dart';
+
+/// 会话列表（移动端首页）：卡片式会话 + 新建会话。
 class ConversationListPage extends StatefulWidget {
   const ConversationListPage({super.key});
 
@@ -14,9 +17,25 @@ class _ConversationListPageState extends State<ConversationListPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('CosyAgent 会话'),
+        title: Row(
+          children: [
+            Container(
+              width: 26,
+              height: 26,
+              decoration: BoxDecoration(
+                gradient: AppTheme.brandGradient,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.auto_awesome,
+                  size: 15, color: Colors.white),
+            ),
+            const SizedBox(width: 8),
+            const Text('CosyAgent'),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.settings_outlined),
@@ -25,16 +44,17 @@ class _ConversationListPageState extends State<ConversationListPage> {
           ),
         ],
       ),
-      body: ListView.separated(
+      body: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 88),
         itemCount: _sessions.length,
-        separatorBuilder: (_, _) => const Divider(height: 1),
-        itemBuilder: (context, i) => ListTile(
-          leading: const Icon(Icons.forum_outlined),
-          title: Text('会话 ${_sessions[i]}'),
-          subtitle: Text(_sessions[i]),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push('/chat/${_sessions[i]}'),
-        ),
+        itemBuilder: (context, i) {
+          final id = _sessions[i];
+          return SessionCard(
+            title: '会话 $id',
+            subtitle: id,
+            onTap: () => context.push('/chat/$id'),
+          );
+        },
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
@@ -42,8 +62,13 @@ class _ConversationListPageState extends State<ConversationListPage> {
           setState(() => _sessions.insert(0, id));
           context.push('/chat/$id');
         },
+        backgroundColor: theme.colorScheme.primary,
+        foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
         label: const Text('新建会话'),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        ),
       ),
     );
   }

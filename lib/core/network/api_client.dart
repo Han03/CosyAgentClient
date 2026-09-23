@@ -8,35 +8,61 @@ import '../../models/knowledge_hit.dart';
 import '../../models/task_detail.dart';
 import 'api_exception.dart';
 
-/// 客户端运行配置：服务地址与 API Key。
-/// 默认值经 --dart-define 注入（COSY_BASE_URL / COSY_API_KEY），运行时可修改。
+/// 客户端运行配置：服务地址、API Key 与 Mock 开关。
+/// 默认值经 --dart-define 注入（COSY_BASE_URL / COSY_API_KEY / COSY_MOCK_ENABLED），运行时可修改。
 class AppSettings {
   static const _baseUrlDefault =
       String.fromEnvironment('COSY_BASE_URL', defaultValue: 'http://localhost:8080');
   static const _apiKeyDefault =
       String.fromEnvironment('COSY_API_KEY', defaultValue: '');
+  static const _mockEnabledDefault =
+      String.fromEnvironment('COSY_MOCK_ENABLED', defaultValue: 'false') == 'true';
 
   final String baseUrl;
   final String apiKey;
 
-  const AppSettings({required this.baseUrl, required this.apiKey});
+  /// Mock 模式：开启后请求携带 X-Cosy-Mock: true，服务端按请求级开关模拟 LLM 全链路。
+  final bool mockEnabled;
 
-  factory AppSettings.defaults() =>
-      AppSettings(baseUrl: _baseUrlDefault, apiKey: _apiKeyDefault);
+  const AppSettings({
+    required this.baseUrl,
+    required this.apiKey,
+    this.mockEnabled = false,
+  });
+
+  factory AppSettings.defaults() => AppSettings(
+        baseUrl: _baseUrlDefault,
+        apiKey: _apiKeyDefault,
+        mockEnabled: _mockEnabledDefault,
+      );
+
+  AppSettings copyWith({String? baseUrl, String? apiKey, bool? mockEnabled}) =>
+      AppSettings(
+        baseUrl: baseUrl ?? this.baseUrl,
+        apiKey: apiKey ?? this.apiKey,
+        mockEnabled: mockEnabled ?? this.mockEnabled,
+      );
 }
 
-/// 持久化运行配置（baseUrl 内存态 + apiKey 安全存储）。
+/// 持久化运行配置（baseUrl 内存态 + apiKey 安全存储 + mock 开关）。
 class SettingsStore {
   final _secure = const FlutterSecureStorage();
 
   static const _keyBaseUrl = 'cosy.baseUrl';
   static const _keyApiKey = 'cosy.apiKey';
+  static const _keyMockEnabled = 'cosy.mockEnabled';
 
   Future<AppSettings> load() async {
     final baseUrl =
         await _secure.read(key: _keyBaseUrl) ?? AppSettings.defaults().baseUrl;
     final apiKey = await _secure.read(key: _keyApiKey) ?? '';
-    return AppSettings(baseUrl: baseUrl, apiKey: apiKey);
+    final mockEnabled =
+        await _secure.read(key: _keyMockEnabled) ?? AppSettings.defaults().mockEnabled.toString();
+    return AppSettings(
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+      mockEnabled: mockEnabled == 'true',
+    );
   }
 
   Future<void> save(AppSettings settings) async {
@@ -46,6 +72,7 @@ class SettingsStore {
     } else {
       await _secure.delete(key: _keyApiKey);
     }
+    await _secure.write(key: _keyMockEnabled, value: settings.mockEnabled.toString());
   }
 }
 
@@ -91,7 +118,8 @@ class ApiClient {
   Dio get dio => _dio;
 }
 
-/// 鉴权拦截器：从设置注入 X-API-Key（未配置不注入）。
+/// 鉴权与 Mock 拦截器：从设置注入 X-API-Key（未配置不注入）；
+/// Mock 开关开启时注入 X-Cosy-Mock: true（请求级覆盖服务端全局配置，关闭时不注入回退服务端）。
 class _AuthInterceptor extends Interceptor {
   final Future<AppSettings> Function() _settingsLoader;
 
@@ -102,6 +130,9 @@ class _AuthInterceptor extends Interceptor {
     final settings = await _settingsLoader();
     if (settings.apiKey.isNotEmpty) {
       options.headers['X-API-Key'] = settings.apiKey;
+    }
+    if (settings.mockEnabled) {
+      options.headers['X-Cosy-Mock'] = 'true';
     }
     handler.next(options);
   }
