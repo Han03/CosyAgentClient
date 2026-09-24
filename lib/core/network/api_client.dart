@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../../models/agent_message.dart';
 import '../../models/agent_result.dart';
 import '../../models/agent_task.dart';
 import '../../models/session_summary.dart';
@@ -289,6 +290,12 @@ Future<AgentResult> postResume(Dio dio, String taskId, String message) async {
 Future<TaskDetail> getTaskDetail(Dio dio, String taskId) async {
   final resp = await dio.get<Map<String, dynamic>>('/api/agent/tasks/$taskId');
   return unwrap(resp.data, TaskDetail.fromJson);
+}
+
+Future<List<AgentMessage>> getSessionMessages(Dio dio, String sessionId) async {
+  final resp = await dio.get<Map<String, dynamic>>(
+      '/api/agent/sessions//messages');
+  return unwrapList(resp.data, AgentMessage.fromJson);
 }
 
 Future<List<SessionSummary>> listSessions(Dio dio, {int limit = 20}) async {

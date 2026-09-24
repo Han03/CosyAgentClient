@@ -27,6 +27,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final List<AgentMessage> _messages = [];
   final Set<int> _expanded = {};
   bool _sending = false;
+  bool _loadingHistory = false;
   String? _lastTaskId;
   String? _sessionId; // 会话 ID：null = 尚未创建（首条消息发送后由服务端返回）
   String? _title; // 会话名称 = 首条消息
@@ -35,6 +36,35 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void initState() {
     super.initState();
     _sessionId = widget.sessionId;
+    if (_sessionId != null && _sessionId!.isNotEmpty) {
+      _loadHistory();
+    }
+  }
+
+  /// 进入已有会话：加载全部历史消息 + 最新任务（供"继续执行"恢复）。
+  Future<void> _loadHistory() async {
+    final sid = _sessionId!;
+    setState(() => _loadingHistory = true);
+    try {
+      final chatRepo = await ref.read(chatRepositoryProvider.future);
+      final taskRepo = await ref.read(taskRepositoryProvider.future);
+      final messages = await chatRepo.sessionMessages(sid);
+      final tasks = await taskRepo.listTasks(sessionId: sid, limit: 1);
+      if (!mounted) return;
+      setState(() {
+        _messages.addAll(messages);
+        if (tasks.isNotEmpty) _lastTaskId = tasks.first.taskId;
+        _loadingHistory = false;
+      });
+      _scrollToBottom();
+    } on Exception catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _messages.add(AgentMessage(
+            role: 'ASSISTANT', content: '历史消息加载失败：$e'));
+        _loadingHistory = false;
+      });
+    }
   }
 
   Future<void> _send(String input) async {
@@ -151,7 +181,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 760),
-                child: _messages.isEmpty && !_sending
+                child: _messages.isEmpty && _loadingHistory
+                    ? const Center(child: CircularProgressIndicator())
+                    : _messages.isEmpty && !_sending
                     ? const _EmptyState()
                     : ListView.builder(
                         controller: _scroll,
