@@ -6,12 +6,14 @@ class SessionSummary {
   final String title;
   final AgentState state;
   final String? updatedAt;
+  final bool pinned;
 
   const SessionSummary({
     required this.sessionId,
     required this.title,
     required this.state,
     this.updatedAt,
+    this.pinned = false,
   });
 
   factory SessionSummary.fromJson(Map<String, dynamic> json) => SessionSummary(
@@ -19,5 +21,6 @@ class SessionSummary {
         title: json['title'] as String? ?? '',
         state: AgentState.fromWire(json['state'] as String?),
         updatedAt: json['updatedAt'] as String?,
+        pinned: json['pinned'] as bool? ?? false,
       );
 }

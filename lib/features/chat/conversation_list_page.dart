@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../core/logging/cosy_logger.dart';
+import '../../models/session_selection.dart';
+import '../../models/session_summary.dart';
 import '../../providers/app_providers.dart';
 import '../../widgets/session_card.dart';
 
@@ -73,8 +76,16 @@ class ConversationListPage extends ConsumerWidget {
                 return SessionCard(
                   title: s.title,
                   subtitle: s.sessionId,
-                  onTap: () => context.push('/chat/${s.sessionId}',
-                      extra: s.title),
+                  pinned: s.pinned,
+                  onTap: () {
+                    // 同步桌面单实例会话状态（窄→宽切换后由 provider 恢复）
+                    ref.read(currentSessionProvider.notifier).state =
+                        SessionSelection(s.sessionId, s.title);
+                    context.push('/chat/${s.sessionId}', extra: s.title);
+                  },
+                  onPin: () => _togglePin(ref, s),
+                  onRename: () => _renameSession(context, ref, s),
+                  onDelete: () => _deleteSession(context, ref, s),
                 );
               },
             ),
@@ -93,4 +104,78 @@ class ConversationListPage extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// 置顶/取消置顶（移动端）。
+Future<void> _togglePin(WidgetRef ref, SessionSummary s) async {
+  try {
+    final repo = await ref.read(taskRepositoryProvider.future);
+    await repo.pinSession(s.sessionId, pinned: !s.pinned);
+  } catch (e) {
+    CosyLogger.instance.error('ui', '置顶失败: $e');
+  }
+  ref.invalidate(sessionListProvider);
+}
+
+/// 重命名会话（移动端）：对话框输入新标题。
+Future<void> _renameSession(BuildContext context, WidgetRef ref,
+    SessionSummary s) async {
+  final controller = TextEditingController(text: s.title);
+  final title = await showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('重命名会话'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        maxLines: 1,
+        decoration: const InputDecoration(hintText: '输入会话名称'),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('保存')),
+      ],
+    ),
+  );
+  if (title == null || title.isEmpty) return;
+  try {
+    final repo = await ref.read(taskRepositoryProvider.future);
+    await repo.renameSession(s.sessionId, title);
+  } catch (e) {
+    CosyLogger.instance.error('ui', '重命名失败: $e');
+  }
+  ref.invalidate(sessionListProvider);
+}
+
+/// 删除会话（移动端）：确认后删除。
+Future<void> _deleteSession(BuildContext context, WidgetRef ref,
+    SessionSummary s) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('删除会话'),
+      content: Text('确定删除会话「${s.title}」吗？该操作不可恢复。'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消')),
+        FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error),
+            child: const Text('删除')),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  try {
+    final repo = await ref.read(taskRepositoryProvider.future);
+    await repo.deleteSession(s.sessionId);
+  } catch (e) {
+    CosyLogger.instance.error('ui', '删除会话失败: $e');
+  }
+  ref.invalidate(sessionListProvider);
 }

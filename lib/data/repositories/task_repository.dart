@@ -21,4 +21,13 @@ class TaskRepository {
 
   Future<List<SessionSummary>> fetchSessions({int limit = 20}) =>
       listSessions(_dio, limit: limit);
+
+  Future<bool> pinSession(String sessionId, {required bool pinned}) =>
+      pinSessionRequest(_dio, sessionId, pinned);
+
+  Future<bool> renameSession(String sessionId, String title) =>
+      renameSessionRequest(_dio, sessionId, title);
+
+  Future<bool> deleteSession(String sessionId) =>
+      deleteSessionRequest(_dio, sessionId);
 }

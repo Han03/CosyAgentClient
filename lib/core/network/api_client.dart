@@ -310,6 +310,41 @@ Future<List<SessionSummary>> listSessions(Dio dio, {int limit = 20}) async {
   return unwrapList(resp.data, SessionSummary.fromJson);
 }
 
+/// 置顶/取消置顶会话（服务端 Result 包装，data 为布尔原值）。
+Future<bool> pinSessionRequest(Dio dio, String sessionId, bool pinned) async {
+  final resp = await dio.post<Map<String, dynamic>>(
+      '/api/agent/sessions/$sessionId/pin',
+      data: {'pinned': pinned});
+  return _unwrapBool(resp.data);
+}
+
+/// 重命名会话（title 覆盖首条消息标题）。
+Future<bool> renameSessionRequest(Dio dio, String sessionId, String title) async {
+  final resp = await dio.post<Map<String, dynamic>>(
+      '/api/agent/sessions/$sessionId/rename',
+      data: {'title': title});
+  return _unwrapBool(resp.data);
+}
+
+/// 删除会话（服务端联动清理任务/轨迹/记忆）。
+Future<bool> deleteSessionRequest(Dio dio, String sessionId) async {
+  final resp = await dio.delete<Map<String, dynamic>>(
+      '/api/agent/sessions/$sessionId');
+  return _unwrapBool(resp.data);
+}
+
+/// Result 解包：code==0 取 data 布尔值。
+bool _unwrapBool(dynamic body) {
+  if (body is! Map<String, dynamic>) {
+    throw const ApiException(-3, '响应格式异常');
+  }
+  final code = body['code'] as int? ?? 0;
+  if (code != 0) {
+    throw ApiException(code, body['message'] as String? ?? '未知错误');
+  }
+  return body['data'] as bool? ?? true;
+}
+
 Future<List<AgentTask>> listTaskPage(
     Dio dio, {String? sessionId, int limit = 20}) async {
   final resp = await dio.get<Map<String, dynamic>>('/api/agent/tasks',

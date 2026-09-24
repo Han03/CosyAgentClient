@@ -6,6 +6,7 @@ import '../../app/theme.dart';
 import '../../core/network/api_exception.dart';
 import '../../models/agent_message.dart';
 import '../../models/session_summary.dart';
+import '../../core/logging/cosy_logger.dart';
 import '../../models/session_selection.dart';
 import '../../models/agent_result.dart';
 import '../../providers/app_providers.dart';
@@ -47,14 +48,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         _loadHistory();
       }
     } else {
-      // 桌面单实例对话页：监听全局会话选择，切换会话/新建都不重建页面
-      ref.listen(currentSessionProvider, (prev, next) => _applySelection(next));
+      // 桌面单实例对话页：初始应用当前选择（listen 在 build 中注册）
       _applySelection(ref.read(currentSessionProvider));
     }
   }
 
   /// 应用会话选择（桌面单实例）：null/空=空会话；同会话忽略(不重载)；否则加载历史。
   void _applySelection(SessionSelection? sel) {
+    CosyLogger.instance
+        .info('ui', 'apply selection: ${sel?.sessionId} current=$_sessionId');
     final newId = sel?.sessionId;
     if (newId == null || newId.isEmpty) {
       if (_sessionId == null || _sessionId!.isEmpty) return; // 已在空会话
@@ -210,6 +212,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.standalone) {
+      // 桌面单实例：每次 build 注册监听（Riverpod 自动去重），
+      // 点击列表/新建时切换会话内容，不重建页面
+      ref.listen<SessionSelection?>(currentSessionProvider, (prev, next) {
+        CosyLogger.instance
+            .info('ui', 'listen: ${prev?.sessionId} -> ${next?.sessionId}');
+        _applySelection(next);
+      });
+    }
     final hasSession = _sessionId != null && _sessionId!.isNotEmpty;
     final title = _title ?? (hasSession ? '会话 $_sessionId' : '新会话');
     return Scaffold(
@@ -217,16 +228,19 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         automaticallyImplyLeading: true,
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-          if (_lastTaskId != null)
-            TextButton(
-              onPressed: _sending ? null : _resume,
-              child: const Text('继续执行'),
+          // 手机模式（standalone 栈式页）不展示操作菜单；桌面单实例页保留
+          if (!widget.standalone) ...[
+            if (_lastTaskId != null)
+              TextButton(
+                onPressed: _sending ? null : _resume,
+                child: const Text('继续执行'),
+              ),
+            IconButton(
+              icon: const Icon(Icons.receipt_long_outlined),
+              tooltip: '任务列表',
+              onPressed: () => context.push('/tasks'),
             ),
-          IconButton(
-            icon: const Icon(Icons.receipt_long_outlined),
-            tooltip: '任务列表',
-            onPressed: () => context.push('/tasks'),
-          ),
+          ],
         ],
       ),
       body: Column(

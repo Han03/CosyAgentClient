@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app/theme.dart';
+import '../core/logging/cosy_logger.dart';
 import '../models/session_selection.dart';
+import '../models/session_summary.dart';
 import '../providers/app_providers.dart';
 import '../widgets/session_card.dart';
 
 /// 响应式外壳：宽屏（≥900）桌面三栏式侧栏 + 内容区；窄屏底部导航。
-class AppShell extends StatelessWidget {
+class AppShell extends StatefulWidget {
   final StatefulNavigationShell navigationShell;
 
   const AppShell({super.key, required this.navigationShell});
@@ -21,9 +23,30 @@ class AppShell extends StatelessWidget {
   ];
 
   @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  bool? _lastWide;
+
+  @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       final wide = constraints.maxWidth >= 900;
+      if (wide != _lastWide) {
+        _lastWide = wide;
+        if (wide) {
+          // 窄→宽切换：路由若停留在移动端栈式 /chat/:id，回到桌面单实例 '/'。
+          // 窄屏点击会话时已同步 currentSessionProvider，桌面页据此加载对应会话。
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            final uri = GoRouter.of(context).state.uri;
+            if (uri.path.startsWith('/chat/')) {
+              GoRouter.of(context).go('/');
+            }
+          });
+        }
+      }
       return wide ? _buildWide(context) : _buildNarrow(context);
     });
   }
@@ -37,15 +60,15 @@ class AppShell extends StatelessWidget {
           SizedBox(
             width: 300,
             child: _ConversationPane(
-              onNav: (i) => navigationShell.goBranch(i,
-                  initialLocation: i == navigationShell.currentIndex),
+              onNav: (i) => widget.navigationShell.goBranch(i,
+                  initialLocation: i == widget.navigationShell.currentIndex),
             ),
           ),
           VerticalDivider(width: 1, color: theme.dividerColor),
           Expanded(
             child: ColoredBox(
               color: theme.colorScheme.surfaceContainerLowest,
-              child: navigationShell,
+              child: widget.navigationShell,
             ),
           ),
         ],
@@ -56,13 +79,13 @@ class AppShell extends StatelessWidget {
   // ---- 移动端：内容区 + 底部导航 ----
   Widget _buildNarrow(BuildContext context) {
     return Scaffold(
-      body: navigationShell,
+      body: widget.navigationShell,
       bottomNavigationBar: NavigationBar(
-        selectedIndex: navigationShell.currentIndex,
-        onDestinationSelected: (i) => navigationShell.goBranch(i,
-            initialLocation: i == navigationShell.currentIndex),
+        selectedIndex: widget.navigationShell.currentIndex,
+        onDestinationSelected: (i) => widget.navigationShell.goBranch(i,
+            initialLocation: i == widget.navigationShell.currentIndex),
         destinations: [
-          for (final d in _destinations)
+          for (final d in AppShell._destinations)
             NavigationDestination(icon: Icon(d.icon), label: d.label),
         ],
       ),
@@ -81,6 +104,86 @@ class _ConversationPane extends ConsumerStatefulWidget {
 }
 
 class _ConversationPaneState extends ConsumerState<_ConversationPane> {
+  /// 置顶/取消置顶：调后端并刷新列表。
+  Future<void> _togglePin(SessionSummary s) async {
+    try {
+      final repo = await ref.read(taskRepositoryProvider.future);
+      await repo.pinSession(s.sessionId, pinned: !s.pinned);
+    } catch (e) {
+      CosyLogger.instance.error('ui', '置顶失败: $e');
+    }
+    ref.invalidate(sessionListProvider);
+  }
+
+  /// 重命名会话：对话框输入新标题，同步当前会话标题。
+  Future<void> _renameSession(SessionSummary s) async {
+    final controller = TextEditingController(text: s.title);
+    final title = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重命名会话'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 1,
+          decoration: const InputDecoration(hintText: '输入会话名称'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+              child: const Text('保存')),
+        ],
+      ),
+    );
+    if (title == null || title.isEmpty) return;
+    try {
+      final repo = await ref.read(taskRepositoryProvider.future);
+      await repo.renameSession(s.sessionId, title);
+    } catch (e) {
+      CosyLogger.instance.error('ui', '重命名失败: $e');
+    }
+    if (ref.read(currentSessionProvider)?.sessionId == s.sessionId) {
+      ref.read(currentSessionProvider.notifier).state =
+          SessionSelection(s.sessionId, title);
+    }
+    ref.invalidate(sessionListProvider);
+  }
+
+  /// 删除会话：确认后删除；若删除的是当前会话则回到空会话。
+  Future<void> _deleteSession(SessionSummary s) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除会话'),
+        content: Text('确定删除会话「${s.title}」吗？该操作不可恢复。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(ctx).colorScheme.error),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final repo = await ref.read(taskRepositoryProvider.future);
+      await repo.deleteSession(s.sessionId);
+    } catch (e) {
+      CosyLogger.instance.error('ui', '删除会话失败: $e');
+    }
+    if (ref.read(currentSessionProvider)?.sessionId == s.sessionId) {
+      ref.read(currentSessionProvider.notifier).state =
+          const SessionSelection(null, null);
+    }
+    ref.invalidate(sessionListProvider);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -167,9 +270,17 @@ class _ConversationPaneState extends ConsumerState<_ConversationPane> {
                       subtitle: s.sessionId,
                       selected: s.sessionId ==
                           ref.watch(currentSessionProvider)?.sessionId,
-                      onTap: () => ref
-                          .read(currentSessionProvider.notifier)
-                          .state = SessionSelection(s.sessionId, s.title),
+                      pinned: s.pinned,
+                      onTap: () {
+                        CosyLogger.instance.info(
+                            'ui', 'list tap: ${s.sessionId} title=${s.title}');
+                        ref
+                            .read(currentSessionProvider.notifier)
+                            .state = SessionSelection(s.sessionId, s.title);
+                      },
+                      onPin: () => _togglePin(s),
+                      onRename: () => _renameSession(s),
+                      onDelete: () => _deleteSession(s),
                     );
                   },
                 );
