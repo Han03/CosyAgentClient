@@ -294,7 +294,7 @@ Future<TaskDetail> getTaskDetail(Dio dio, String taskId) async {
 
 Future<List<AgentMessage>> getSessionMessages(Dio dio, String sessionId) async {
   final resp = await dio.get<Map<String, dynamic>>(
-      '/api/agent/sessions//messages');
+      '/api/agent/sessions/$sessionId/messages');
   return unwrapList(resp.data, AgentMessage.fromJson);
 }
 
