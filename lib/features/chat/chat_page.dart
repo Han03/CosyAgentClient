@@ -9,10 +9,13 @@ import '../../models/agent_result.dart';
 import '../../providers/app_providers.dart';
 
 /// 对话页：仿豆包消息流（空状态 / 气泡 / 工具轨迹 / 输入胶囊）。
+///
+/// [sessionId] 为空表示"新会话"：发送首条消息时才创建会话，
+/// 会话名称 = 首条消息（由服务端生成 sessionId 并返回）。
 class ChatPage extends ConsumerStatefulWidget {
-  final String sessionId;
+  final String? sessionId;
 
-  const ChatPage({super.key, required this.sessionId});
+  const ChatPage({super.key, this.sessionId});
 
   @override
   ConsumerState<ChatPage> createState() => _ChatPageState();
@@ -25,6 +28,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final Set<int> _expanded = {};
   bool _sending = false;
   String? _lastTaskId;
+  String? _sessionId; // 会话 ID：null = 尚未创建（首条消息发送后由服务端返回）
+  String? _title; // 会话名称 = 首条消息
+
+  @override
+  void initState() {
+    super.initState();
+    _sessionId = widget.sessionId;
+  }
 
   Future<void> _send(String input) async {
     if (input.trim().isEmpty || _sending) return;
@@ -37,9 +48,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     try {
       final repo = await ref.read(chatRepositoryProvider.future);
-      final AgentResult result = await repo.chat(widget.sessionId, input.trim());
+      final AgentResult result = await repo.chat(_sessionId, input.trim());
       if (!mounted) return;
       setState(() {
+        // 首条消息触发会话创建：记录服务端生成的 sessionId 与会话名（首条消息）
+        if (_sessionId == null || _sessionId!.isEmpty) {
+          _sessionId = result.sessionId;
+          _title = input.trim();
+        }
         _messages.addAll(result.trace
             .where((m) => m.role != 'USER' || m.content != input.trim())
             .toList());
@@ -48,6 +64,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         _sending = false;
       });
       _scrollToBottom();
+      if (_sessionId != null && _sessionId!.isNotEmpty) {
+        ref.invalidate(sessionListProvider);
+      }
     } on Exception catch (e) {
       if (!mounted) return;
       setState(() {
@@ -106,10 +125,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    final hasSession = _sessionId != null && _sessionId!.isNotEmpty;
+    final title = _title ?? (hasSession ? '会话 $_sessionId' : '新会话');
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: true,
-        title: Text('会话 ${widget.sessionId}'),
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           if (_lastTaskId != null)
             TextButton(
@@ -259,7 +280,8 @@ class _InputBar extends StatelessWidget {
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
                 isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               ),
               onSubmitted: (_) => onSend(),
             ),

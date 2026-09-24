@@ -1,23 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../providers/app_providers.dart';
 import '../../widgets/session_card.dart';
 
-/// 会话列表（移动端首页）：卡片式会话 + 新建会话。
-class ConversationListPage extends StatefulWidget {
+/// 会话列表（移动端首页）：后端会话列表 + 新建会话。
+/// 新建仅进入空会话界面，发送首条消息时才真正创建会话。
+class ConversationListPage extends ConsumerWidget {
   const ConversationListPage({super.key});
 
   @override
-  State<ConversationListPage> createState() => _ConversationListPageState();
-}
-
-class _ConversationListPageState extends State<ConversationListPage> {
-  final List<String> _sessions = ['s1', 's2'];
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final sessions = ref.watch(sessionListProvider);
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -44,24 +41,47 @@ class _ConversationListPageState extends State<ConversationListPage> {
           ),
         ],
       ),
-      body: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 88),
-        itemCount: _sessions.length,
-        itemBuilder: (context, i) {
-          final id = _sessions[i];
-          return SessionCard(
-            title: '会话 $id',
-            subtitle: id,
-            onTap: () => context.push('/chat/$id'),
+      body: sessions.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(
+          child: Text('加载失败：$e',
+              style: TextStyle(color: theme.colorScheme.error)),
+        ),
+        data: (list) {
+          if (list.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.forum_outlined,
+                      size: 56, color: theme.colorScheme.onSurfaceVariant),
+                  const SizedBox(height: 12),
+                  Text('暂无会话，点击下方新建',
+                      style: TextStyle(
+                          color: theme.colorScheme.onSurfaceVariant)),
+                ],
+              ),
+            );
+          }
+          return RefreshIndicator(
+            onRefresh: () async => ref.invalidate(sessionListProvider),
+            child: ListView.builder(
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 88),
+              itemCount: list.length,
+              itemBuilder: (context, i) {
+                final s = list[i];
+                return SessionCard(
+                  title: s.title,
+                  subtitle: s.sessionId,
+                  onTap: () => context.push('/chat/${s.sessionId}'),
+                );
+              },
+            ),
           );
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          final id = 's${DateTime.now().millisecondsSinceEpoch}';
-          setState(() => _sessions.insert(0, id));
-          context.push('/chat/$id');
-        },
+        onPressed: () => context.push('/chat/new'),
         backgroundColor: theme.colorScheme.primary,
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),

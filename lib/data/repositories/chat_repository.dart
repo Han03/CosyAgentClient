@@ -9,7 +9,7 @@ class ChatRepository {
 
   ChatRepository(this._dio);
 
-  Future<AgentResult> chat(String sessionId, String message) =>
+  Future<AgentResult> chat(String? sessionId, String message) =>
       postChat(_dio, sessionId, message);
 
   Future<AgentResult> resume(String taskId, String message) =>

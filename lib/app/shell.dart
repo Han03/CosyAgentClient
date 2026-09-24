@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app/theme.dart';
+import '../providers/app_providers.dart';
 import '../widgets/session_card.dart';
 
 /// 响应式外壳：宽屏（≥900）桌面三栏式侧栏 + 内容区；窄屏底部导航。
@@ -34,8 +36,6 @@ class AppShell extends StatelessWidget {
           SizedBox(
             width: 300,
             child: _ConversationPane(
-              onSelect: (id) => navigationShell.goBranch(0),
-              currentIndex: navigationShell.currentIndex,
               onNav: (i) => navigationShell.goBranch(i,
                   initialLocation: i == navigationShell.currentIndex),
             ),
@@ -69,28 +69,21 @@ class AppShell extends StatelessWidget {
   }
 }
 
-/// 桌面端左侧会话栏（品牌 + 新建 + 会话列表 + 设置入口）。
-class _ConversationPane extends StatefulWidget {
-  final ValueChanged<String> onSelect;
-  final int currentIndex;
+/// 桌面端左侧会话栏（品牌 + 新建 + 会话列表 + 快捷导航）。
+class _ConversationPane extends ConsumerStatefulWidget {
   final ValueChanged<int> onNav;
 
-  const _ConversationPane({
-    required this.onSelect,
-    required this.currentIndex,
-    required this.onNav,
-  });
+  const _ConversationPane({required this.onNav});
 
   @override
-  State<_ConversationPane> createState() => _ConversationPaneState();
+  ConsumerState<_ConversationPane> createState() => _ConversationPaneState();
 }
 
-class _ConversationPaneState extends State<_ConversationPane> {
-  final List<String> _sessions = ['s1', 's2'];
-
+class _ConversationPaneState extends ConsumerState<_ConversationPane> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final sessions = ref.watch(sessionListProvider);
     return ColoredBox(
       color: theme.colorScheme.surfaceContainerLow,
       child: Column(
@@ -120,17 +113,13 @@ class _ConversationPaneState extends State<_ConversationPane> {
               ],
             ),
           ),
-          // 新建会话
+          // 新建会话：进入空会话界面，发送首条消息时才真正创建
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
             child: SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: () {
-                  final id = 's${DateTime.now().millisecondsSinceEpoch}';
-                  setState(() => _sessions.insert(0, id));
-                  context.push('/chat/$id');
-                },
+                onPressed: () => context.go('/chat/new'),
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('新建会话'),
                 style: OutlinedButton.styleFrom(
@@ -143,25 +132,44 @@ class _ConversationPaneState extends State<_ConversationPane> {
               ),
             ),
           ),
-          // 会话列表
+          // 会话列表（后端 /api/agent/sessions，首条消息为标题）
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              itemCount: _sessions.length,
-              itemBuilder: (context, i) {
-                final id = _sessions[i];
-                return SessionCard(
-                  title: '会话 $id',
-                  subtitle: id,
-                  onTap: () {
-                    widget.onSelect(id);
-                    context.push('/chat/$id');
+            child: sessions.when(
+              loading: () =>
+                  const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text('加载失败：$e',
+                      style: TextStyle(
+                          fontSize: 12, color: theme.colorScheme.error)),
+                ),
+              ),
+              data: (list) {
+                if (list.isEmpty) {
+                  return Center(
+                    child: Text('暂无会话，点击上方新建',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurfaceVariant)),
+                  );
+                }
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  itemCount: list.length,
+                  itemBuilder: (context, i) {
+                    final s = list[i];
+                    return SessionCard(
+                      title: s.title,
+                      subtitle: s.sessionId,
+                      onTap: () => context.go('/chat/${s.sessionId}'),
+                    );
                   },
                 );
               },
             ),
           ),
-          // 底部导航（桌面快捷入口）
+          // 底部快捷导航
           Container(
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
             decoration: BoxDecoration(
@@ -181,7 +189,7 @@ class _ConversationPaneState extends State<_ConversationPane> {
                   _NavButton(
                     icon: d.icon,
                     label: d.label,
-                    selected: widget.currentIndex == i,
+                    selected: false,
                     onTap: () => widget.onNav(i),
                   ),
               ],
@@ -231,5 +239,3 @@ class _NavButton extends StatelessWidget {
     );
   }
 }
-
-/// 会话卡片（会话列表 / 桌面侧栏共用样式）。

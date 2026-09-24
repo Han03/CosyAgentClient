@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../models/agent_result.dart';
 import '../../models/agent_task.dart';
+import '../../models/session_summary.dart';
 import '../../models/knowledge_hit.dart';
 import '../../models/task_detail.dart';
 import '../logging/cosy_logger.dart';
@@ -270,9 +271,12 @@ List<T> unwrapList<T>(
 
 typedef JsonMap = Map<String, dynamic>;
 
-Future<AgentResult> postChat(Dio dio, String sessionId, String message) async {
-  final resp = await dio.post<Map<String, dynamic>>(
-      '/api/agent/chat', data: {'sessionId': sessionId, 'message': message});
+Future<AgentResult> postChat(Dio dio, String? sessionId, String message) async {
+  final resp = await dio.post<Map<String, dynamic>>('/api/agent/chat',
+      data: {
+        if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
+        'message': message,
+      });
   return unwrap(resp.data, AgentResult.fromJson);
 }
 
@@ -285,6 +289,12 @@ Future<AgentResult> postResume(Dio dio, String taskId, String message) async {
 Future<TaskDetail> getTaskDetail(Dio dio, String taskId) async {
   final resp = await dio.get<Map<String, dynamic>>('/api/agent/tasks/$taskId');
   return unwrap(resp.data, TaskDetail.fromJson);
+}
+
+Future<List<SessionSummary>> listSessions(Dio dio, {int limit = 20}) async {
+  final resp = await dio.get<Map<String, dynamic>>('/api/agent/sessions',
+      queryParameters: {'limit': limit});
+  return unwrapList(resp.data, SessionSummary.fromJson);
 }
 
 Future<List<AgentTask>> listTaskPage(
