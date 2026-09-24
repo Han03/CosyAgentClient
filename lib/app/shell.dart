@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app/theme.dart';
+import '../models/session_selection.dart';
 import '../providers/app_providers.dart';
 import '../widgets/session_card.dart';
 
@@ -119,7 +120,9 @@ class _ConversationPaneState extends ConsumerState<_ConversationPane> {
             child: SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: () => context.go('/chat/new'),
+                onPressed: () => ref
+                    .read(currentSessionProvider.notifier)
+                    .state = const SessionSelection(null, null),
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('新建会话'),
                 style: OutlinedButton.styleFrom(
@@ -162,7 +165,11 @@ class _ConversationPaneState extends ConsumerState<_ConversationPane> {
                     return SessionCard(
                       title: s.title,
                       subtitle: s.sessionId,
-                      onTap: () => context.go('/chat/${s.sessionId}'),
+                      selected: s.sessionId ==
+                          ref.watch(currentSessionProvider)?.sessionId,
+                      onTap: () => ref
+                          .read(currentSessionProvider.notifier)
+                          .state = SessionSelection(s.sessionId, s.title),
                     );
                   },
                 );

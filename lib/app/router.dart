@@ -45,7 +45,11 @@ final routerProvider = Provider<GoRouter>((ref) {
                   path: 'chat/:sessionId',
                   builder: (_, state) {
                     final id = state.pathParameters['sessionId'] ?? '';
-                    return ChatPage(sessionId: id == 'new' ? null : id);
+                    return ChatPage(
+                      sessionId: id == 'new' ? null : id,
+                      title: state.extra as String?,
+                      standalone: true, // 移动端栈式页面：构造参数驱动
+                    );
                   },
                 ),
               ],

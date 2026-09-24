@@ -6,6 +6,7 @@ import '../../app/theme.dart';
 import '../../core/network/api_exception.dart';
 import '../../models/agent_message.dart';
 import '../../models/session_summary.dart';
+import '../../models/session_selection.dart';
 import '../../models/agent_result.dart';
 import '../../providers/app_providers.dart';
 
@@ -15,8 +16,10 @@ import '../../providers/app_providers.dart';
 /// 会话名称 = 首条消息（由服务端生成 sessionId 并返回）。
 class ChatPage extends ConsumerStatefulWidget {
   final String? sessionId;
+  final String? title; // 会话标题（列表点击传入，避免重新进入时再查接口）
+  final bool standalone; // true=栈式页面(移动端 push，构造参数驱动)；false=桌面单实例(provider 驱动)
 
-  const ChatPage({super.key, this.sessionId});
+  const ChatPage({super.key, this.sessionId, this.title, this.standalone = false});
 
   @override
   ConsumerState<ChatPage> createState() => _ChatPageState();
@@ -36,8 +39,44 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void initState() {
     super.initState();
-    _sessionId = widget.sessionId;
-    if (_sessionId != null && _sessionId!.isNotEmpty) {
+    if (widget.standalone) {
+      // 移动端栈式页面：构造参数驱动
+      _sessionId = widget.sessionId;
+      _title = widget.title;
+      if (_sessionId != null && _sessionId!.isNotEmpty) {
+        _loadHistory();
+      }
+    } else {
+      // 桌面单实例对话页：监听全局会话选择，切换会话/新建都不重建页面
+      ref.listen(currentSessionProvider, (prev, next) => _applySelection(next));
+      _applySelection(ref.read(currentSessionProvider));
+    }
+  }
+
+  /// 应用会话选择（桌面单实例）：null/空=空会话；同会话忽略(不重载)；否则加载历史。
+  void _applySelection(SessionSelection? sel) {
+    final newId = sel?.sessionId;
+    if (newId == null || newId.isEmpty) {
+      if (_sessionId == null || _sessionId!.isEmpty) return; // 已在空会话
+      setState(() {
+        _messages.clear();
+        _expanded.clear();
+        _sessionId = null;
+        _title = null;
+        _lastTaskId = null;
+        _loadingHistory = false;
+      });
+      _controller.clear();
+    } else {
+      if (_sessionId == newId) return; // 同会话：不重新加载
+      setState(() {
+        _sessionId = newId;
+        _title = sel!.title;
+        _messages.clear();
+        _expanded.clear();
+        _lastTaskId = null;
+        _loadingHistory = true;
+      });
       _loadHistory();
     }
   }
@@ -60,7 +99,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (!mounted) return;
       setState(() {
         _messages.addAll(messages);
-        _title = summary?.title;
+        _title = _title ?? summary?.title;
         if (tasks.isNotEmpty) _lastTaskId = tasks.first.taskId;
         _loadingHistory = false;
       });
@@ -104,9 +143,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _scrollToBottom();
       if (_sessionId != null && _sessionId!.isNotEmpty) {
         ref.invalidate(sessionListProvider);
-        // 新会话创建后立即把 URL 绑定到该会话：再次点击列表同会话时
-        // 路由位置相同，ChatPage 不再重建重载
-        context.go('/chat/$_sessionId');
+        if (widget.standalone) {
+          // 移动端：新会话创建后把 URL 绑定到该会话，点列表同会话不再重建重载
+          context.go('/chat/$_sessionId');
+        } else {
+          // 桌面单实例：更新全局会话选择（同值短路，页面不重载）
+          ref.read(currentSessionProvider.notifier).state =
+              SessionSelection(_sessionId, _title);
+        }
       }
     } on Exception catch (e) {
       if (!mounted) return;

@@ -73,7 +73,8 @@ class ConversationListPage extends ConsumerWidget {
                 return SessionCard(
                   title: s.title,
                   subtitle: s.sessionId,
-                  onTap: () => context.push('/chat/${s.sessionId}'),
+                  onTap: () => context.push('/chat/${s.sessionId}',
+                      extra: s.title),
                 );
               },
             ),

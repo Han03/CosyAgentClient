@@ -6,9 +6,15 @@ import '../data/repositories/knowledge_repository.dart';
 import '../data/repositories/system_repository.dart';
 import '../data/repositories/task_repository.dart';
 import '../models/session_summary.dart';
+import '../models/session_selection.dart';
 
 /// 鉴权失效事件（401）：触发计数，供全局监听跳转设置页。
 final authEventProvider = StateProvider<int>((_) => 0);
+
+/// 当前会话选择（桌面单实例对话页）：列表点击 / 新建会话时更新，
+/// ChatPage 监听并切换内容。null = 新会话（空会话界面）。
+final currentSessionProvider =
+    StateProvider<SessionSelection?>((_) => null);
 
 /// 网络层单例：baseUrl 来自设置（保存配置后 invalidate 重建），401 触发全局事件。
 final apiClientProvider = FutureProvider<ApiClient>((ref) async {
