@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/logging/cosy_logger.dart';
 import '../core/network/api_client.dart';
 import '../data/repositories/chat_repository.dart';
 import '../data/repositories/knowledge_repository.dart';
@@ -8,6 +9,19 @@ import '../data/repositories/task_repository.dart';
 import '../models/model_catalog.dart';
 import '../models/session_summary.dart';
 import '../models/session_selection.dart';
+
+/// 启动引导：并行准备启动所需数据（本地配置、会话列表预取、模型目录、默认模型恢复）。
+/// 失败不阻断进入主界面（尽力而为，各页面自带加载/错误态）。
+final bootstrapProvider = FutureProvider<void>((ref) async {
+  try {
+    await ref.read(settingsProvider.future);
+    await ref.read(sessionListProvider.future);
+    await ref.read(modelCatalogProvider.future);
+    await ref.read(defaultModelProvider.notifier).load();
+  } catch (e) {
+    CosyLogger.instance.warn('boot', '启动数据准备未完成(尽力而为): $e');
+  }
+});
 
 /// 鉴权失效事件（401）：触发计数，供全局监听跳转设置页。
 final authEventProvider = StateProvider<int>((_) => 0);

@@ -8,6 +8,8 @@ import 'app/router.dart';
 import 'app/theme.dart';
 import 'core/logging/cosy_logger.dart';
 import 'core/network/api_client.dart';
+import 'features/splash/splash_page.dart';
+import 'providers/app_providers.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,12 +42,16 @@ class CosyAgentApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final bootstrap = ref.watch(bootstrapProvider);
     final router = ref.watch(routerProvider);
     return MaterialApp.router(
       title: 'CosyAgent',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark(),
       routerConfig: router,
+      // 启动引导期间覆盖为主界面为加载页（路由/Navigator 保留，就绪后无缝切换）
+      builder: (context, child) =>
+          bootstrap.isLoading ? const SplashPage() : child!,
     );
   }
 }

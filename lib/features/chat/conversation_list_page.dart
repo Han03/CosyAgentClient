@@ -46,23 +46,46 @@ class ConversationListPage extends ConsumerWidget {
       ),
       body: sessions.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(
-          child: Text('加载失败：$e',
-              style: TextStyle(color: theme.colorScheme.error)),
+        error: (e, _) => _refreshable(
+          onRefresh: () async => ref.invalidate(sessionListProvider),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.cloud_off_outlined,
+                    size: 40, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(height: 10),
+                Text('加载失败：$e',
+                    style: TextStyle(color: theme.colorScheme.error)),
+                const SizedBox(height: 12),
+                Text('下拉刷新重试',
+                    style: TextStyle(
+                        color: theme.colorScheme.onSurfaceVariant)),
+              ],
+            ),
+          ),
         ),
         data: (list) {
           if (list.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.forum_outlined,
-                      size: 56, color: theme.colorScheme.onSurfaceVariant),
-                  const SizedBox(height: 12),
-                  Text('暂无会话，点击下方新建',
-                      style: TextStyle(
-                          color: theme.colorScheme.onSurfaceVariant)),
-                ],
+            return _refreshable(
+              onRefresh: () async => ref.invalidate(sessionListProvider),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.forum_outlined,
+                        size: 56, color: theme.colorScheme.onSurfaceVariant),
+                    const SizedBox(height: 12),
+                    Text('暂无会话，点击下方新建',
+                        style: TextStyle(
+                            color: theme.colorScheme.onSurfaceVariant)),
+                    const SizedBox(height: 6),
+                    Text('下拉刷新',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurfaceVariant)),
+                  ],
+                ),
               ),
             );
           }
@@ -104,6 +127,25 @@ class ConversationListPage extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// 可下拉刷新的滚动容器：空态/错误态也能触发下拉刷新。
+Widget _refreshable({
+  required Future<void> Function() onRefresh,
+  required Widget child,
+}) {
+  return RefreshIndicator(
+    onRefresh: onRefresh,
+    child: LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: child,
+        ),
+      ),
+    ),
+  );
 }
 
 /// 置顶/取消置顶（移动端）。

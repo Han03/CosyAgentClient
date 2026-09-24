@@ -246,48 +246,70 @@ class _ConversationPaneState extends ConsumerState<_ConversationPane> {
             child: sessions.when(
               loading: () =>
                   const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text('加载失败：$e',
-                      style: TextStyle(
-                          fontSize: 12, color: theme.colorScheme.error)),
+              error: (e, _) => _paneRefreshable(
+                onRefresh: () async => ref.invalidate(sessionListProvider),
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('加载失败：$e',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: theme.colorScheme.error)),
+                        const SizedBox(height: 6),
+                        Text('下拉刷新重试',
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: theme.colorScheme.onSurfaceVariant)),
+                      ],
+                    ),
+                  ),
                 ),
               ),
               data: (list) {
                 if (list.isEmpty) {
-                  return Center(
-                    child: Text('暂无会话，点击上方新建',
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: theme.colorScheme.onSurfaceVariant)),
+                  return _paneRefreshable(
+                    onRefresh: () async =>
+                        ref.invalidate(sessionListProvider),
+                    child: Center(
+                      child: Text('暂无会话，点击上方新建',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: theme.colorScheme.onSurfaceVariant)),
+                    ),
                   );
                 }
-                return ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  itemCount: list.length,
-                  itemBuilder: (context, i) {
-                    final s = list[i];
-                    return SessionCard(
-                      title: s.title,
-                      subtitle: s.sessionId,
-                      selected: s.sessionId ==
-                          ref.watch(currentSessionProvider)?.sessionId,
-                      pinned: s.pinned,
-                      onTap: () {
-                        CosyLogger.instance.info(
-                            'ui', 'list tap: ${s.sessionId} title=${s.title}');
-                        ref
-                            .read(currentSessionProvider.notifier)
-                            .state = SessionSelection(s.sessionId, s.title);
-                        // 若当前在其他导航分支(任务/知识库/设置), 切回会话分支
-                        widget.onNav(0);
-                      },
-                      onPin: () => _togglePin(s),
-                      onRename: () => _renameSession(s),
-                      onDelete: () => _deleteSession(s),
-                    );
-                  },
+                return RefreshIndicator(
+                  onRefresh: () async =>
+                      ref.invalidate(sessionListProvider),
+                  child: ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    itemCount: list.length,
+                    itemBuilder: (context, i) {
+                      final s = list[i];
+                      return SessionCard(
+                        title: s.title,
+                        subtitle: s.sessionId,
+                        selected: s.sessionId ==
+                            ref.watch(currentSessionProvider)?.sessionId,
+                        pinned: s.pinned,
+                        onTap: () {
+                          CosyLogger.instance.info(
+                              'ui', 'list tap: ${s.sessionId} title=${s.title}');
+                          ref
+                              .read(currentSessionProvider.notifier)
+                              .state = SessionSelection(s.sessionId, s.title);
+                          // 若当前在其他导航分支(任务/知识库/设置), 切回会话分支
+                          widget.onNav(0);
+                        },
+                        onPin: () => _togglePin(s),
+                        onRename: () => _renameSession(s),
+                        onDelete: () => _deleteSession(s),
+                      );
+                    },
+                  ),
                 );
               },
             ),
@@ -361,4 +383,23 @@ class _NavButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 侧栏可下拉刷新容器：空态/错误态也能触发下拉刷新。
+Widget _paneRefreshable({
+  required Future<void> Function() onRefresh,
+  required Widget child,
+}) {
+  return RefreshIndicator(
+    onRefresh: onRefresh,
+    child: LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: child,
+        ),
+      ),
+    ),
+  );
 }
