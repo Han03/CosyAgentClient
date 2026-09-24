@@ -40,6 +40,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void initState() {
     super.initState();
+    // 恢复会话模型选择（本地持久化），后续由选择条修改
+    ref.read(defaultModelProvider.notifier).load();
     if (widget.standalone) {
       // 移动端栈式页面：构造参数驱动
       _sessionId = widget.sessionId;
@@ -127,7 +129,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     try {
       final repo = await ref.read(chatRepositoryProvider.future);
-      final AgentResult result = await repo.chat(_sessionId, input.trim());
+      final modelChoice = ref.read(defaultModelProvider);
+      final AgentResult result =
+          await repo.chat(_sessionId, input.trim(), modelChoice: modelChoice);
       if (!mounted) return;
       setState(() {
         // 首条消息触发会话创建：记录服务端生成的 sessionId 与会话名（首条消息）
@@ -172,7 +176,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     setState(() => _sending = true);
     try {
       final repo = await ref.read(chatRepositoryProvider.future);
-      final result = await repo.resume(taskId, '继续');
+      final modelChoice = ref.read(defaultModelProvider);
+      final result = await repo.resume(taskId, '继续', modelChoice: modelChoice);
       if (!mounted) return;
       setState(() {
         _messages.add(AgentMessage(role: 'ASSISTANT', content: result.answer));
@@ -282,10 +287,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 constraints: const BoxConstraints(maxWidth: 760),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
-                  child: _InputBar(
-                    controller: _controller,
-                    enabled: !_sending,
-                    onSend: () => _send(_controller.text),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const _ModelBar(),
+                      const SizedBox(height: 6),
+                      _InputBar(
+                        controller: _controller,
+                        enabled: !_sending,
+                        onSend: () => _send(_controller.text),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -579,6 +592,55 @@ class _ThinkingTile extends StatelessWidget {
             Text('Agent 执行中…',
                 style: TextStyle(
                     fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 会话模型选择条（Auto 自动选择 / 指定模型；目录来自后端权威配置，选择本地持久化）。
+class _ModelBar extends ConsumerWidget {
+  const _ModelBar();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final current = ref.watch(defaultModelProvider);
+    final catalog = ref.watch(modelCatalogProvider);
+    final models = catalog.maybeWhen(
+      data: (c) => c.models,
+      orElse: () => const <String>[],
+    );
+    final label = current == 'auto' ? 'Auto' : current;
+    return PopupMenuButton<String>(
+      tooltip: '选择模型',
+      initialValue: current,
+      onSelected: (v) => ref.read(defaultModelProvider.notifier).select(v),
+      itemBuilder: (context) => [
+        const PopupMenuItem(value: 'auto', child: Text('Auto 自动选择')),
+        ...models.map((m) => PopupMenuItem(value: m, child: Text(m))),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          border: Border.all(
+              color: theme.colorScheme.outline.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.smart_toy_outlined,
+                size: 13, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 5),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 12, color: theme.colorScheme.onSurface)),
+            const SizedBox(width: 2),
+            Icon(Icons.arrow_drop_down,
+                size: 15, color: theme.colorScheme.onSurfaceVariant),
           ],
         ),
       ),

@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../models/agent_message.dart';
 import '../../models/agent_result.dart';
+import '../../models/model_catalog.dart';
 import '../../models/agent_task.dart';
 import '../../models/session_summary.dart';
 import '../../models/knowledge_hit.dart';
@@ -20,6 +21,8 @@ class AppSettings {
       String.fromEnvironment('COSY_API_KEY', defaultValue: '');
   static const _mockEnabledDefault =
       String.fromEnvironment('COSY_MOCK_ENABLED', defaultValue: 'false') == 'true';
+  static const _defaultModelDefault =
+      String.fromEnvironment('COSY_DEFAULT_MODEL', defaultValue: 'auto');
 
   final String baseUrl;
   final String apiKey;
@@ -27,23 +30,33 @@ class AppSettings {
   /// Mock 模式：开启后请求携带 X-Cosy-Mock: true，服务端按请求级开关模拟 LLM 全链路。
   final bool mockEnabled;
 
+  /// 会话默认模型选择：'auto'（后端路由链）或 '平台/模型'（锁定单候选）。
+  final String defaultModel;
+
   const AppSettings({
     required this.baseUrl,
     required this.apiKey,
     this.mockEnabled = false,
+    this.defaultModel = 'auto',
   });
 
   factory AppSettings.defaults() => AppSettings(
         baseUrl: _baseUrlDefault,
         apiKey: _apiKeyDefault,
         mockEnabled: _mockEnabledDefault,
+        defaultModel: _defaultModelDefault,
       );
 
-  AppSettings copyWith({String? baseUrl, String? apiKey, bool? mockEnabled}) =>
+  AppSettings copyWith(
+          {String? baseUrl,
+          String? apiKey,
+          bool? mockEnabled,
+          String? defaultModel}) =>
       AppSettings(
         baseUrl: baseUrl ?? this.baseUrl,
         apiKey: apiKey ?? this.apiKey,
         mockEnabled: mockEnabled ?? this.mockEnabled,
+        defaultModel: defaultModel ?? this.defaultModel,
       );
 }
 
@@ -54,6 +67,7 @@ class SettingsStore {
   static const _keyBaseUrl = 'cosy.baseUrl';
   static const _keyApiKey = 'cosy.apiKey';
   static const _keyMockEnabled = 'cosy.mockEnabled';
+  static const _keyDefaultModel = 'cosy.defaultModel';
 
   Future<AppSettings> load() async {
     final baseUrl =
@@ -61,10 +75,12 @@ class SettingsStore {
     final apiKey = await _secure.read(key: _keyApiKey) ?? '';
     final mockEnabled =
         await _secure.read(key: _keyMockEnabled) ?? AppSettings.defaults().mockEnabled.toString();
+    final defaultModel = await _secure.read(key: _keyDefaultModel) ?? 'auto';
     return AppSettings(
       baseUrl: baseUrl,
       apiKey: apiKey,
       mockEnabled: mockEnabled == 'true',
+      defaultModel: defaultModel,
     );
   }
 
@@ -76,6 +92,7 @@ class SettingsStore {
       await _secure.delete(key: _keyApiKey);
     }
     await _secure.write(key: _keyMockEnabled, value: settings.mockEnabled.toString());
+    await _secure.write(key: _keyDefaultModel, value: settings.defaultModel);
   }
 }
 
@@ -272,18 +289,23 @@ List<T> unwrapList<T>(
 
 typedef JsonMap = Map<String, dynamic>;
 
-Future<AgentResult> postChat(Dio dio, String? sessionId, String message) async {
+Future<AgentResult> postChat(Dio dio, String? sessionId, String message,
+    {String modelChoice = 'auto'}) async {
   final resp = await dio.post<Map<String, dynamic>>('/api/agent/chat',
       data: {
         if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
         'message': message,
-      });
+      },
+      options: Options(headers: {'X-Cosy-Model': modelChoice}));
   return unwrap(resp.data, AgentResult.fromJson);
 }
 
-Future<AgentResult> postResume(Dio dio, String taskId, String message) async {
+Future<AgentResult> postResume(Dio dio, String taskId, String message,
+    {String modelChoice = 'auto'}) async {
   final resp = await dio.post<Map<String, dynamic>>(
-      '/api/agent/tasks/$taskId/resume', data: {'message': message});
+      '/api/agent/tasks/$taskId/resume',
+      data: {'message': message},
+      options: Options(headers: {'X-Cosy-Model': modelChoice}));
   return unwrap(resp.data, AgentResult.fromJson);
 }
 
@@ -395,6 +417,12 @@ Future<List<String>> getToolNames(Dio dio) async {
     throw const ApiException(-3, '响应缺少 data 列表');
   }
   return list.map((e) => e.toString()).toList();
+}
+
+/// 拉取模型路由目录（后端权威配置）：models 为去重候选列表。
+Future<ModelCatalog> getModelCatalog(Dio dio) async {
+  final resp = await dio.get<Map<String, dynamic>>('/api/agent/model-routing/catalog');
+  return unwrap(resp.data, ModelCatalog.fromJson);
 }
 
 Future<JsonMap> getHealth(Dio dio) async {

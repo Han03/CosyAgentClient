@@ -13,9 +13,11 @@ class ChatRepository {
   Future<List<AgentMessage>> sessionMessages(String sessionId) =>
       getSessionMessages(_dio, sessionId);
 
-Future<AgentResult> chat(String? sessionId, String message) =>
-      postChat(_dio, sessionId, message);
+Future<AgentResult> chat(String? sessionId, String message,
+          {String modelChoice = 'auto'}) =>
+      postChat(_dio, sessionId, message, modelChoice: modelChoice);
 
-  Future<AgentResult> resume(String taskId, String message) =>
-      postResume(_dio, taskId, message);
+  Future<AgentResult> resume(String taskId, String message,
+          {String modelChoice = 'auto'}) =>
+      postResume(_dio, taskId, message, modelChoice: modelChoice);
 }
