@@ -16,6 +16,9 @@ class TaskRepository {
   Future<List<AgentTask>> listTasks({String? sessionId, int limit = 20}) =>
       listTaskPage(_dio, sessionId: sessionId, limit: limit);
 
+  Future<SessionSummary> fetchSession(String sessionId) =>
+      getSessionSummary(_dio, sessionId);
+
   Future<List<SessionSummary>> fetchSessions({int limit = 20}) =>
       listSessions(_dio, limit: limit);
 }

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/theme.dart';
 import '../../core/network/api_exception.dart';
 import '../../models/agent_message.dart';
+import '../../models/session_summary.dart';
 import '../../models/agent_result.dart';
 import '../../providers/app_providers.dart';
 
@@ -50,9 +51,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final taskRepo = await ref.read(taskRepositoryProvider.future);
       final messages = await chatRepo.sessionMessages(sid);
       final tasks = await taskRepo.listTasks(sessionId: sid, limit: 1);
+      SessionSummary? summary;
+      try {
+        summary = await taskRepo.fetchSession(sid);
+      } on Exception {
+        summary = null; // 标题获取失败时回退显示会话 id
+      }
       if (!mounted) return;
       setState(() {
         _messages.addAll(messages);
+        _title = summary?.title;
         if (tasks.isNotEmpty) _lastTaskId = tasks.first.taskId;
         _loadingHistory = false;
       });
@@ -96,6 +104,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _scrollToBottom();
       if (_sessionId != null && _sessionId!.isNotEmpty) {
         ref.invalidate(sessionListProvider);
+        // 新会话创建后立即把 URL 绑定到该会话：再次点击列表同会话时
+        // 路由位置相同，ChatPage 不再重建重载
+        context.go('/chat/$_sessionId');
       }
     } on Exception catch (e) {
       if (!mounted) return;
