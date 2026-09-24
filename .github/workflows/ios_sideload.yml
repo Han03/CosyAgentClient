@@ -1,0 +1,57 @@
+name: iOS Sideload IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      xcode_version:
+        description: 'Xcode version to build with (macos-14 image has 15.4/16.1/16.2)'
+        required: false
+        default: '16.2'
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-ipa:
+    name: Build unsigned IPA for sideload
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ inputs.xcode_version || '16.2' }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS release (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        run: |
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r cosy_agent_unsigned.ipa Payload
+          rm -rf Payload
+          echo "IPA_PATH=$PWD/cosy_agent_unsigned.ipa" >> "$GITHUB_ENV"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosy-agent-unsigned-ipa
+          path: ${{ env.IPA_PATH }}
+          if-no-files-found: error
+          retention-days: 14
