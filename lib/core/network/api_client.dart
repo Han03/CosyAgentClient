@@ -6,6 +6,7 @@ import '../../models/agent_result.dart';
 import '../../models/agent_task.dart';
 import '../../models/knowledge_hit.dart';
 import '../../models/task_detail.dart';
+import '../logging/cosy_logger.dart';
 import 'api_exception.dart';
 
 /// 客户端运行配置：服务地址、API Key 与 Mock 开关。
@@ -98,24 +99,59 @@ class ApiClient {
           responseType: ResponseType.json,
         )) {
     _dio.interceptors.add(_AuthInterceptor(_settingsLoader));
+    _dio.interceptors.add(_RequestLogInterceptor());
     _dio.interceptors.add(_ErrorInterceptor(_onUnauthorized));
-    _dio.interceptors.add(LogInterceptor(
-      requestBody: false,
-      responseBody: false,
-      logPrint: (o) => debugLog(o),
-    ));
-  }
-
-  static void debugLog(Object? o) {
-    // 统一日志出口：生产可替换为正式 Logger；此处保持极简。
-    assert(() {
-      // ignore: avoid_print
-      print(o);
-      return true;
-    }());
   }
 
   Dio get dio => _dio;
+}
+
+/// HTTP 请求日志拦截器：请求（方法/路径/头部摘要，Key 脱敏）→ 响应（状态码/耗时）→ 错误（类型/耗时）。
+/// 输出写入文件日志（CosyLogger），供连接失败等运行时问题事后定位。
+class _RequestLogInterceptor extends Interceptor {
+  static const _maskedKeys = {'x-api-key', 'authorization', 'cookie'};
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    options.extra['_logStart'] = Stopwatch()..start();
+    final headers = options.headers.entries
+        .where((e) => !{'accept', 'content-type', 'user-agent', 'content-length'}
+            .contains(e.key.toLowerCase()))
+        .map((e) {
+      final value =
+          _maskedKeys.contains(e.key.toLowerCase()) && e.value.toString().isNotEmpty
+              ? '***'
+              : e.value.toString();
+      return '${e.key}=$value';
+    })
+        .join(', ');
+    CosyLogger.instance.info(
+        'http', 'REQ ${options.method} ${options.uri.path} { $headers }');
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    final sw = response.requestOptions.extra['_logStart'] as Stopwatch?;
+    CosyLogger.instance.info(
+        'http',
+        'RES ${response.statusCode} '
+        '${response.requestOptions.method} ${response.requestOptions.uri.path} '
+        '(${sw?.elapsedMilliseconds ?? -1}ms)');
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    final sw = err.requestOptions.extra['_logStart'] as Stopwatch?;
+    CosyLogger.instance.error(
+        'http',
+        'ERR ${err.type} ${err.requestOptions.method} '
+        '${err.requestOptions.uri.path} (${sw?.elapsedMilliseconds ?? -1}ms) '
+        'msg=${err.message}',
+        err.error);
+    handler.next(err);
+  }
 }
 
 /// 鉴权与 Mock 拦截器：从设置注入 X-API-Key（未配置不注入）；
@@ -152,6 +188,8 @@ class _ErrorInterceptor extends Interceptor {
       if (code != 0) {
         final message = body['message'] as String? ?? '未知错误';
         if (code == 401) {
+          CosyLogger.instance.warn('http',
+              '401 未授权: ${response.requestOptions.method} ${response.requestOptions.uri.path}');
           _onUnauthorized();
           handler.reject(DioException.connectionError(
               requestOptions: response.requestOptions,

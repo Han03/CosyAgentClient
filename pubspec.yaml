@@ -47,6 +47,8 @@ dependencies:
   flutter_secure_storage: ^9.2.4
   # 轻量动画：消息/状态过渡
   flutter_animate: ^4.5.2
+  # 平台目录解析：日志文件持久化目录（Windows 应用数据 / 移动端文档目录）
+  path_provider: ^2.1.4
 
 dev_dependencies:
   flutter_test:

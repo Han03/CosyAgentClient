@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../app/theme.dart';
+import '../../core/logging/cosy_logger.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_exception.dart';
 import '../../providers/app_providers.dart';
@@ -47,6 +48,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       await storage.delete(key: 'cosy.apiKey');
     }
     await storage.write(key: 'cosy.mockEnabled', value: _mockEnabled.toString());
+    CosyLogger.instance.info('cfg',
+        '保存配置: baseUrl=${_baseUrl.text.trim()} apiKey=${_apiKey.text.trim().isEmpty ? '未设置' : '已设置'} mock=$_mockEnabled');
     ref.invalidate(settingsProvider);
     ref.invalidate(apiClientProvider);
     if (mounted) {
