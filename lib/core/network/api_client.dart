@@ -84,16 +84,18 @@ final settingsProvider = FutureProvider<AppSettings>((ref) async {
   return ref.watch(settingsStoreProvider).load();
 });
 
-/// 网络层统一入口：Dio + 拦截器链（Auth → Error → Log）。
+/// 网络层统一入口：Dio + 拦截器链（Auth → RequestLog → Error）。
 class ApiClient {
   final Dio _dio;
   final Future<AppSettings> Function() _settingsLoader;
   final void Function() _onUnauthorized;
 
   ApiClient({
+    required String baseUrl,
     required this._settingsLoader,
     required this._onUnauthorized,
   })  : _dio = Dio(BaseOptions(
+          baseUrl: baseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 30),
           responseType: ResponseType.json,

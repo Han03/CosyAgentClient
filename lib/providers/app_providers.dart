@@ -9,9 +9,11 @@ import '../data/repositories/task_repository.dart';
 /// 鉴权失效事件（401）：触发计数，供全局监听跳转设置页。
 final authEventProvider = StateProvider<int>((_) => 0);
 
-/// 网络层单例：配置来自安全存储，401 触发全局事件。
+/// 网络层单例：baseUrl 来自设置（保存配置后 invalidate 重建），401 触发全局事件。
 final apiClientProvider = FutureProvider<ApiClient>((ref) async {
+  final settings = await ref.read(settingsProvider.future);
   return ApiClient(
+    baseUrl: settings.baseUrl,
     settingsLoader: () => ref.read(settingsProvider.future),
     onUnauthorized: () => ref.read(authEventProvider.notifier).state++,
   );
