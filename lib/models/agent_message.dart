@@ -7,6 +7,7 @@ class AgentMessage {
   final String? toolName;
   final String? toolArguments;
   final String? timestamp;
+  final int? durationMs; // 工具执行耗时(ms)：流式 toolResult 事件透传，历史消息为 null
 
   const AgentMessage({
     required this.role,
@@ -15,6 +16,7 @@ class AgentMessage {
     this.toolName,
     this.toolArguments,
     this.timestamp,
+    this.durationMs,
   });
 
   factory AgentMessage.fromJson(Map<String, dynamic> json) => AgentMessage(
@@ -24,6 +26,7 @@ class AgentMessage {
         toolName: json['toolName'] as String?,
         toolArguments: json['toolArguments'] as String?,
         timestamp: json['timestamp'] as String?,
+        durationMs: json['durationMs'] as int?,
       );
 
   bool get isTool => role == 'TOOL';

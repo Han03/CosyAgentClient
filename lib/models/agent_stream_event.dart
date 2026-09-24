@@ -13,6 +13,7 @@ class AgentStreamEvent {
   final int? iterations; // done
   final int? costMs; // done
   final String? errorMessage; // error / done(FAILED)
+  final int? durationMs; // toolResult：工具执行耗时(ms)
 
   const AgentStreamEvent({
     required this.type,
@@ -27,6 +28,7 @@ class AgentStreamEvent {
     this.iterations,
     this.costMs,
     this.errorMessage,
+    this.durationMs,
   });
 
   factory AgentStreamEvent.fromJson(Map<String, dynamic> json) =>
@@ -43,5 +45,6 @@ class AgentStreamEvent {
         iterations: json['iterations'] as int?,
         costMs: json['costMs'] as int?,
         errorMessage: json['errorMessage'] as String?,
+        durationMs: json['durationMs'] as int?,
       );
 }
