@@ -47,7 +47,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     } else {
       await storage.delete(key: 'cosy.apiKey');
     }
-    await storage.write(key: 'cosy.mockEnabled', value: _mockEnabled.toString());
     CosyLogger.instance.info('cfg',
         '保存配置: baseUrl=${_baseUrl.text.trim()} apiKey=${_apiKey.text.trim().isEmpty ? '未设置' : '已设置'} mock=$_mockEnabled');
     ref.invalidate(settingsProvider);
@@ -56,6 +55,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('配置已保存')));
     }
+  }
+
+  /// Mock 开关即时生效：切换即持久化并重建网络层（不依赖"保存配置"按钮）。
+  Future<void> _toggleMock(bool value) async {
+    setState(() => _mockEnabled = value);
+    const storage = FlutterSecureStorage();
+    await storage.write(key: 'cosy.mockEnabled', value: value.toString());
+    CosyLogger.instance.info('cfg', 'Mock 开关: $value');
+    ref.invalidate(settingsProvider);
+    ref.invalidate(apiClientProvider);
   }
 
   Future<void> _test() async {
@@ -201,7 +210,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                             '由服务端模拟 LLM 全链路（无需真实模型 Key）；'
                             '关闭时不携带该请求头，回退服务端全局配置'),
                         value: _mockEnabled,
-                        onChanged: (v) => setState(() => _mockEnabled = v),
+                        onChanged: _toggleMock,
                       ),
                     ],
                   ),
