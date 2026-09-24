@@ -74,12 +74,24 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     });
     try {
       final repo = await ref.read(systemRepositoryProvider.future);
+      // 连接是否成功以业务接口为准（服务端可达即可用；
+      // 记忆等外部依赖未启动时服务端自动降级，对话照常）
       final status = await repo.status();
-      final health = await repo.health();
+      // health 仅作附加提示：失败/DOWN 不判连接失败
+      String healthNote = '';
+      try {
+        final health = await repo.health();
+        final s = health['status'] as String? ?? 'UNKNOWN';
+        healthNote = s == 'UP'
+            ? ' health=UP'
+            : '（服务已连接，但依赖未就绪：health=$s，记忆/知识库可能降级）';
+      } on Exception {
+        healthNote = '（服务已连接，health 查询不可用）';
+      }
       if (!mounted) return;
       setState(() {
         _testResult =
-            '连接成功：step=${status['step']} tools=${status['tools']} health=${health['status']}';
+            '连接成功：step=${status['step']} tools=${status['tools']}$healthNote';
         _testing = false;
       });
     } on Exception catch (e) {
