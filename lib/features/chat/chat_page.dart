@@ -8,7 +8,6 @@ import '../../models/agent_message.dart';
 import '../../models/session_summary.dart';
 import '../../core/logging/cosy_logger.dart';
 import '../../models/session_selection.dart';
-import '../../models/agent_result.dart';
 import '../../providers/app_providers.dart';
 
 /// 对话页：仿豆包消息流（空状态 / 气泡 / 工具轨迹 / 输入胶囊）。
@@ -36,6 +35,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   String? _lastTaskId;
   String? _sessionId; // 会话 ID：null = 尚未创建（首条消息发送后由服务端返回）
   String? _title; // 会话名称 = 首条消息
+  String? _thinkingText; // 流式思考态文案（随 thinking 事件更新轮次）
+  final Map<String, int> _toolIndex = {}; // 工具 callId -> 消息下标（toolResult 回填）
 
   @override
   void initState() {
@@ -65,6 +66,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       setState(() {
         _messages.clear();
         _expanded.clear();
+        _toolIndex.clear();
+        _thinkingText = null;
         _sessionId = null;
         _title = null;
         _lastTaskId = null;
@@ -78,6 +81,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         _title = sel!.title;
         _messages.clear();
         _expanded.clear();
+        _toolIndex.clear();
+        _thinkingText = null;
         _lastTaskId = null;
         _loadingHistory = true;
       });
@@ -127,27 +132,81 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _controller.clear();
     _scrollToBottom();
 
+    final userText = input.trim();
     try {
       final repo = await ref.read(chatRepositoryProvider.future);
       final modelChoice = ref.read(defaultModelProvider);
-      final AgentResult result =
-          await repo.chat(_sessionId, input.trim(), modelChoice: modelChoice);
-      if (!mounted) return;
-      setState(() {
-        // 首条消息触发会话创建：记录服务端生成的 sessionId 与会话名（首条消息）
-        if (_sessionId == null || _sessionId!.isEmpty) {
-          _sessionId = result.sessionId;
-          _title = input.trim();
+      // 流式对话：逐事件实时渲染（思考轮次 / 工具调用与结果 / 回答 / 终态）
+      final stream = repo.chatStream(_sessionId, userText, modelChoice: modelChoice);
+      await for (final event in stream) {
+        if (!mounted) return; // 页面销毁：停止消费流
+        switch (event.type) {
+          case 'thinking':
+            setState(() => _thinkingText = '正在思考…（第 ${event.index ?? 1} 轮）');
+            break;
+          case 'tool':
+            setState(() {
+              _messages.add(AgentMessage(
+                  role: 'TOOL',
+                  toolCallId: event.callId,
+                  toolName: event.toolName,
+                  toolArguments: event.arguments,
+                  content: null)); // 结果未回：展开显示"执行中…"
+              if (event.callId != null) {
+                _toolIndex[event.callId!] = _messages.length - 1;
+              }
+            });
+            break;
+          case 'toolResult':
+            final idx = event.callId == null ? null : _toolIndex[event.callId];
+            if (idx != null) {
+              setState(() {
+                _messages[idx] = AgentMessage(
+                    role: 'TOOL',
+                    toolCallId: event.callId,
+                    toolName: event.toolName,
+                    content: event.content);
+              });
+            }
+            break;
+          case 'answer':
+            setState(() {
+              _messages.add(AgentMessage(role: 'ASSISTANT', content: event.content));
+              _thinkingText = null;
+            });
+            break;
+          case 'done':
+            setState(() {
+              // 首条消息触发会话创建：绑定服务端生成的 sessionId，会话名 = 首条消息
+              if (_sessionId == null || _sessionId!.isEmpty) {
+                _sessionId = event.sessionId;
+                _title = userText;
+              }
+              _lastTaskId = event.taskId;
+              _thinkingText = null;
+              _sending = false;
+            });
+            break;
+          case 'error':
+            setState(() {
+              _messages.add(AgentMessage(
+                  role: 'ASSISTANT',
+                  content: event.errorMessage ?? '执行出错'));
+              _thinkingText = null;
+              _sending = false;
+            });
+            break;
         }
-        _messages.addAll(result.trace
-            .where((m) => m.role != 'USER' || m.content != input.trim())
-            .toList());
-        _messages.add(AgentMessage(role: 'ASSISTANT', content: result.answer));
-        _lastTaskId = result.taskId;
-        _sending = false;
-      });
-      _scrollToBottom();
-      if (_sessionId != null && _sessionId!.isNotEmpty) {
+        _scrollToBottom();
+      }
+      // 流自然结束兜底（服务端异常提前断流时释放输入）
+      if (mounted && _sending) {
+        setState(() {
+          _thinkingText = null;
+          _sending = false;
+        });
+      }
+      if (mounted && _sessionId != null && _sessionId!.isNotEmpty) {
         ref.invalidate(sessionListProvider);
         if (widget.standalone) {
           // 移动端：新会话创建后把 URL 绑定到该会话，点列表同会话不再重建重载
@@ -164,6 +223,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         _messages.add(AgentMessage(
             role: 'ASSISTANT',
             content: e is ApiException ? e.message : '请求失败，请检查服务端'));
+        _thinkingText = null;
         _sending = false;
       });
       _scrollToBottom();
@@ -266,7 +326,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             _messages.length + (_sending ? 1 : 0),
                         itemBuilder: (context, i) {
                           if (i == _messages.length) {
-                            return const _ThinkingTile();
+                            return _ThinkingTile(text: _thinkingText);
                           }
                           return _MessageTile(
                             message: _messages[i],
@@ -566,9 +626,11 @@ class _ToolBubble extends StatelessWidget {
   }
 }
 
-/// Agent 执行中指示。
+/// Agent 执行中指示（thinking 事件实时更新轮次文案）。
 class _ThinkingTile extends StatelessWidget {
-  const _ThinkingTile();
+  final String? text;
+
+  const _ThinkingTile({this.text});
 
   @override
   Widget build(BuildContext context) {
@@ -589,7 +651,7 @@ class _ThinkingTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Text('Agent 执行中…',
+            Text(text ?? 'Agent 执行中…',
                 style: TextStyle(
                     fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
           ],

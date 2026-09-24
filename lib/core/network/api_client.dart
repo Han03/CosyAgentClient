@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../models/agent_message.dart';
+import '../../models/agent_stream_event.dart';
 import '../../models/agent_result.dart';
 import '../../models/model_catalog.dart';
 import '../../models/agent_task.dart';
@@ -288,6 +292,36 @@ List<T> unwrapList<T>(
 // 以下为各仓库直接调用的网络入口（保持 Repository 与 Dio 隔离）。
 
 typedef JsonMap = Map<String, dynamic>;
+
+/// SSE 流式对话：逐事件产出 thinking/tool/toolResult/answer/done/error，
+/// 客户端可实时渲染执行过程（与主流 Agent 工具一致的流式体验）。
+Stream<AgentStreamEvent> streamChat(Dio dio, String? sessionId, String message,
+    {String modelChoice = 'auto'}) async* {
+  final resp = await dio.post<ResponseBody>(
+    '/api/agent/chat/stream',
+    data: {
+      if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
+      'message': message,
+    },
+    options: Options(
+      responseType: ResponseType.stream,
+      // 流式长任务（多轮工具调用 + mock 延迟）放宽接收超时；连接超时保持 10s
+      receiveTimeout: const Duration(minutes: 2),
+      headers: {'X-Cosy-Model': modelChoice},
+    ),
+  );
+  final body = resp.data;
+  if (body == null) {
+    throw const ApiException(-3, '流式响应为空');
+  }
+  final lines = utf8.decoder.bind(body.stream).transform(const LineSplitter());
+  await for (final line in lines) {
+    if (!line.startsWith('data:')) continue;
+    final payload = line.substring(5).trim();
+    if (payload.isEmpty) continue;
+    yield AgentStreamEvent.fromJson(jsonDecode(payload) as Map<String, dynamic>);
+  }
+}
 
 Future<AgentResult> postChat(Dio dio, String? sessionId, String message,
     {String modelChoice = 'auto'}) async {
