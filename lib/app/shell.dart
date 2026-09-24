@@ -223,9 +223,12 @@ class _ConversationPaneState extends ConsumerState<_ConversationPane> {
             child: SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: () => ref
-                    .read(currentSessionProvider.notifier)
-                    .state = const SessionSelection(null, null),
+                onPressed: () {
+                  ref.read(currentSessionProvider.notifier).state =
+                      const SessionSelection(null, null);
+                  // 若当前在其他导航分支(任务/知识库/设置), 切回会话分支
+                  widget.onNav(0);
+                },
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('新建会话'),
                 style: OutlinedButton.styleFrom(
@@ -277,6 +280,8 @@ class _ConversationPaneState extends ConsumerState<_ConversationPane> {
                         ref
                             .read(currentSessionProvider.notifier)
                             .state = SessionSelection(s.sessionId, s.title);
+                        // 若当前在其他导航分支(任务/知识库/设置), 切回会话分支
+                        widget.onNav(0);
                       },
                       onPin: () => _togglePin(s),
                       onRename: () => _renameSession(s),
