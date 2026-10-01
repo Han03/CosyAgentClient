@@ -19,6 +19,24 @@ class SystemRepository {
   Future<List<CapabilitySummary>> capabilities() =>
       net.getCapabilityCatalog(_dio);
 
+  // ---- 能力提供者管理（前端配置第三方能力） ----
+
+  Future<List<CapabilityProviderSummary>> capabilityProviders() =>
+      net.getCapabilityProviders(_dio);
+
+  Future<CapabilityProviderDetail> capabilityProviderDetail(String providerId) =>
+      net.getCapabilityProviderDetail(_dio, providerId);
+
+  Future<String> createCapabilityProvider(Map<String, dynamic> body) =>
+      net.createCapabilityProvider(_dio, body);
+
+  Future<bool> updateCapabilityProvider(
+          String providerId, Map<String, dynamic> body) =>
+      net.updateCapabilityProvider(_dio, providerId, body);
+
+  Future<bool> deleteCapabilityProvider(String providerId) =>
+      net.deleteCapabilityProvider(_dio, providerId);
+
   // ---- 模型管理平台化 ----
 
   Future<List<ProviderSummary>> modelProviders() =>

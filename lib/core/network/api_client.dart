@@ -487,6 +487,49 @@ Future<List<CapabilitySummary>> getCapabilityCatalog(Dio dio) async {
   return unwrapList(resp.data, CapabilitySummary.fromJson);
 }
 
+// ---- 能力提供者管理（前端配置第三方能力，密钥掩码/加密落库） ----
+
+/// 提供者列表（管理）：密钥掩码、无 callToken。
+Future<List<CapabilityProviderSummary>> getCapabilityProviders(Dio dio) async {
+  final resp = await dio.get<Map<String, dynamic>>(
+      '/api/agent/capabilities/providers');
+  return unwrapList(resp.data, CapabilityProviderSummary.fromJson);
+}
+
+/// 提供者详情（编辑回显）：含能力完整定义。
+Future<CapabilityProviderDetail> getCapabilityProviderDetail(
+    Dio dio, String providerId) async {
+  final resp = await dio.get<Map<String, dynamic>>(
+      '/api/agent/capabilities/providers/$providerId');
+  return CapabilityProviderDetail.fromJson(_unwrapData(resp.data));
+}
+
+/// 创建第三方能力提供者（POST 复用注册逻辑，source=console）。
+Future<String> createCapabilityProvider(
+    Dio dio, Map<String, dynamic> body) async {
+  final resp = await dio.post<Map<String, dynamic>>(
+      '/api/agent/capabilities/providers',
+      data: body);
+  final data = _unwrapData(resp.data);
+  return data['providerId']?.toString() ?? '';
+}
+
+/// 更新提供者（authValue 空 = 保持原密钥；能力全量替换）。
+Future<bool> updateCapabilityProvider(
+    Dio dio, String providerId, Map<String, dynamic> body) async {
+  final resp = await dio.put<Map<String, dynamic>>(
+      '/api/agent/capabilities/providers/$providerId',
+      data: body);
+  return _unwrapBool(resp.data);
+}
+
+/// 删除提供者（级联删能力）。
+Future<bool> deleteCapabilityProvider(Dio dio, String providerId) async {
+  final resp = await dio.delete<Map<String, dynamic>>(
+      '/api/agent/capabilities/providers/$providerId');
+  return _unwrapBool(resp.data);
+}
+
 // ---- 模型管理平台化：平台/模型/规则 CRUD + 连通性测试（后端为执行权威） ----
 
 /// 平台列表（掩码 + 模型数）。

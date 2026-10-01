@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -893,15 +894,343 @@ class _CapabilityTab extends ConsumerStatefulWidget {
 }
 
 class _CapabilityTabState extends ConsumerState<_CapabilityTab> {
-  Future<List<CapabilitySummary>>? _capabilities;
+  Future<List<CapabilityProviderSummary>>? _providers;
 
   @override
   void initState() {
     super.initState();
-    _capabilities = ref
+    _reload();
+  }
+
+  void _reload() {
+    _providers = ref
         .read(systemRepositoryProvider.future)
-        .then((repo) => repo.capabilities())
-        .catchError((Object e) => <CapabilitySummary>[]);
+        .then((repo) => repo.capabilityProviders())
+        .catchError((Object e) => <CapabilityProviderSummary>[]);
+    setState(() {});
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    try {
+      await action();
+      _reload();
+    } on Exception catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('操作失败：${e is ApiException ? e.message : e}'),
+          backgroundColor: Theme.of(context).colorScheme.error));
+    }
+  }
+
+  // ---- 提供者表单（基本信息 + 认证 + 能力列表动态编辑器） ----
+
+  Future<void> _showProviderDialog({String? providerId}) async {
+    final repo = await ref.read(systemRepositoryProvider.future);
+    CapabilityProviderDetail? existing;
+    if (providerId != null) {
+      try {
+        existing = await repo.capabilityProviderDetail(providerId);
+      } on Exception {
+        existing = null;
+      }
+    }
+    if (!mounted) return;
+
+    final appName = TextEditingController(text: existing?.summary.appName ?? '');
+    final baseUrl =
+        TextEditingController(text: existing?.summary.baseUrl ?? 'https://');
+    final namespace = TextEditingController(text: 'external');
+    final authValue = TextEditingController();
+    final authHeaderName =
+        TextEditingController(text: existing?.summary.authHeaderName ?? '');
+    final authParamName =
+        TextEditingController(text: existing?.summary.authParamName ?? '');
+    var mode = existing?.summary.mode ?? 'cp';
+    var authModel = existing?.summary.authModel ?? 'none';
+    final items = <_CapFormItem>[
+      if (existing != null)
+        for (final c in existing.capabilities) _CapFormItem.from(c)
+      else
+        _CapFormItem.defaults(),
+    ];
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(existing == null ? '添加第三方能力' : '编辑提供者'),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('提供者',
+                      style:
+                          TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  TextField(
+                      controller: appName,
+                      decoration: const InputDecoration(
+                          labelText: '名称（appName，如 open-meteo）')),
+                  TextField(
+                      controller: baseUrl,
+                      decoration: const InputDecoration(labelText: 'Base URL')),
+                  TextField(
+                      controller: namespace,
+                      decoration:
+                          const InputDecoration(labelText: '命名空间（默认 external）')),
+                  DropdownButtonFormField<String>(
+                    initialValue: mode,
+                    decoration: const InputDecoration(labelText: '注册模式'),
+                    items: const [
+                      DropdownMenuItem(value: 'cp', child: Text('cp（持久落库）')),
+                      DropdownMenuItem(value: 'ap', child: Text('ap（心跳临时）')),
+                    ],
+                    onChanged: (v) =>
+                        setDialogState(() => mode = v ?? 'cp'),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('认证',
+                      style:
+                          TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  DropdownButtonFormField<String>(
+                    initialValue: authModel,
+                    decoration: const InputDecoration(labelText: '认证模型'),
+                    items: const [
+                      DropdownMenuItem(value: 'none', child: Text('无（免费公开 API）')),
+                      DropdownMenuItem(value: 'bearer', child: Text('Bearer Token')),
+                      DropdownMenuItem(
+                          value: 'header', child: Text('自定义请求头（如 X-API-Key）')),
+                      DropdownMenuItem(
+                          value: 'query', child: Text('URL 查询参数（如 appid）')),
+                    ],
+                    onChanged: (v) =>
+                        setDialogState(() => authModel = v ?? 'none'),
+                  ),
+                  if (authModel == 'header')
+                    TextField(
+                        controller: authHeaderName,
+                        decoration: const InputDecoration(
+                            labelText: '请求头名（如 X-API-Key）')),
+                  if (authModel == 'query')
+                    TextField(
+                        controller: authParamName,
+                        decoration: const InputDecoration(
+                            labelText: '参数名（如 appid）')),
+                  if (authModel != 'none')
+                    TextField(
+                        controller: authValue,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText: existing == null
+                              ? '密钥（加密落库，不回显）'
+                              : '密钥（留空保持原值）',
+                        )),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      const Text('能力列表',
+                          style: TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w600)),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () =>
+                            setDialogState(() => items.add(_CapFormItem.defaults())),
+                        child: const Text('+ 添加能力'),
+                      ),
+                    ],
+                  ),
+                  for (var i = 0; i < items.length; i++) _capEditor(i, items[i], setDialogState, () {
+                    setDialogState(() => items.removeAt(i));
+                  }),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消')),
+            GradientButton(label: '保存', onPressed: () {
+              Navigator.pop(context, true);
+            }),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+
+    // 组装提交体：参数 JSON 校验
+    final capabilities = <Map<String, dynamic>>[];
+    for (final it in items) {
+      if (it.name.text.trim().isEmpty || it.endpointPath.text.trim().isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('能力名称与端点路径必填'),
+            backgroundColor: Colors.orange));
+        return;
+      }
+      Map<String, String> params = const {};
+      final raw = it.parameters.text.trim();
+      if (raw.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map) {
+            params = decoded.map((k, v) => MapEntry(k.toString(), v.toString()));
+          }
+        } catch (_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('参数 JSON 格式错误'),
+              backgroundColor: Colors.orange));
+          return;
+        }
+      }
+      capabilities.add({
+        'name': it.name.text.trim(),
+        'description': it.description.text.trim(),
+        'parameters': params,
+        'endpointPath': it.endpointPath.text.trim(),
+        'endpointMethod': it.endpointMethod,
+        'retryable': it.retryable,
+        'endpointMode': it.endpointMode,
+        if (it.endpointMode == 'submit-poll') ...{
+          'statusPath': it.statusPath.text.trim(),
+          'resultPath': it.resultPath.text.trim(),
+          'pollIntervalMs': int.tryParse(it.pollIntervalMs.text) ?? 3000,
+          'pollTimeoutMs': int.tryParse(it.pollTimeoutMs.text) ?? 600000,
+        },
+      });
+    }
+
+    final body = <String, dynamic>{
+      'appName': appName.text.trim(),
+      'baseUrl': baseUrl.text.trim(),
+      'mode': mode,
+      'namespace': namespace.text.trim(),
+      'authModel': authModel,
+      'authHeaderName': authModel == 'header' ? authHeaderName.text.trim() : null,
+      'authParamName': authModel == 'query' ? authParamName.text.trim() : null,
+      'authValue': authValue.text.trim().isEmpty ? null : authValue.text.trim(),
+      'capabilities': capabilities,
+    };
+    await _run(() async {
+      if (existing == null) {
+        await repo.createCapabilityProvider(body);
+      } else {
+        await repo.updateCapabilityProvider(existing.summary.providerId, body);
+      }
+    });
+  }
+
+  /// 单个能力编辑卡片。
+  Widget _capEditor(int index, _CapFormItem it, void Function(void Function()) setDialogState,
+      VoidCallback onRemove) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text('能力 #${index + 1}',
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w600)),
+                const Spacer(),
+                IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    onPressed: onRemove),
+              ],
+            ),
+            TextField(controller: it.name,
+                decoration: const InputDecoration(labelText: '名称（如 forecast）', isDense: true)),
+            TextField(controller: it.description,
+                decoration: const InputDecoration(labelText: '描述（Agent 工具说明）', isDense: true)),
+            TextField(controller: it.parameters,
+                decoration: const InputDecoration(
+                    labelText: '参数 JSON（如 {"latitude":"float","longitude":"float"}）',
+                    isDense: true)),
+            TextField(controller: it.endpointPath,
+                decoration: const InputDecoration(labelText: '端点路径（如 /v1/forecast，支持 {arg}）', isDense: true)),
+            Row(children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: it.endpointMethod,
+                  decoration: const InputDecoration(labelText: '方法', isDense: true),
+                  items: const [
+                    DropdownMenuItem(value: 'GET', child: Text('GET')),
+                    DropdownMenuItem(value: 'POST', child: Text('POST')),
+                  ],
+                  onChanged: (v) =>
+                      setDialogState(() => it.endpointMethod = v ?? 'GET'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: it.endpointMode,
+                  decoration: const InputDecoration(labelText: '调用模式', isDense: true),
+                  items: const [
+                    DropdownMenuItem(value: 'sync', child: Text('sync（直连）')),
+                    DropdownMenuItem(
+                        value: 'submit-poll', child: Text('submit-poll（长任务）')),
+                  ],
+                  onChanged: (v) =>
+                      setDialogState(() => it.endpointMode = v ?? 'sync'),
+                ),
+              ),
+              Checkbox(
+                value: it.retryable,
+                onChanged: (v) => setDialogState(() => it.retryable = v ?? false),
+              ),
+              const Text('可重试', style: TextStyle(fontSize: 11)),
+            ]),
+            if (it.endpointMode == 'submit-poll') ...[
+              TextField(controller: it.statusPath,
+                  decoration: const InputDecoration(labelText: '状态路径（如 /api/status/{id}）', isDense: true)),
+              TextField(controller: it.resultPath,
+                  decoration: const InputDecoration(labelText: '结果路径（如 /api/result/{id}）', isDense: true)),
+              Row(children: [
+                Expanded(
+                    child: TextField(controller: it.pollIntervalMs,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: '轮询间隔 ms', isDense: true))),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: TextField(controller: it.pollTimeoutMs,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: '轮询超时 ms', isDense: true))),
+              ]),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(CapabilityProviderSummary p) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除提供者'),
+        content: Text('删除 ${p.appName}（${p.providerId}）及其 ${p.capabilityCount} 项能力？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('删除',
+                  style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final repo = await ref.read(systemRepositoryProvider.future);
+    await _run(() => repo.deleteCapabilityProvider(p.providerId));
   }
 
   @override
@@ -920,12 +1249,29 @@ class _CapabilityTabState extends ConsumerState<_CapabilityTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('能力中心',
-                        style: TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    FutureBuilder<List<CapabilitySummary>>(
-                      future: _capabilities,
+                    Row(
+                      children: [
+                        const Text('提供者管理',
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w600)),
+                        const Spacer(),
+                        GradientButton(
+                          label: '添加第三方能力',
+                          onPressed: () => _showProviderDialog(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '直接注册第三方 HTTP API（如免费天气服务），配置认证后 Agent 即可调用',
+                      style: TextStyle(
+                          fontSize: 12,
+                          height: 1.4,
+                          color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 8),
+                    FutureBuilder<List<CapabilityProviderSummary>>(
+                      future: _providers,
                       builder: (context, snap) {
                         if (snap.connectionState != ConnectionState.done) {
                           return const Padding(
@@ -940,15 +1286,13 @@ class _CapabilityTabState extends ConsumerState<_CapabilityTab> {
                             ),
                           );
                         }
-                        final caps = snap.data ?? const [];
-                        if (caps.isEmpty) {
+                        final providers = snap.data ?? const [];
+                        if (providers.isEmpty) {
                           return Padding(
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 6),
+                            padding: const EdgeInsets.symmetric(vertical: 6),
                             child: Text(
-                              '暂无已注册能力。外部项目可通过 POST '
-                              '/api/capabilities/register 注册业务能力，'
-                              'Agent 即可在对话中调用',
+                              '暂无已配置提供者。点右上角「添加第三方能力」注册，'
+                              '或由外部项目通过 POST /api/capabilities/register 注册',
                               style: TextStyle(
                                 fontSize: 12,
                                 height: 1.5,
@@ -960,7 +1304,8 @@ class _CapabilityTabState extends ConsumerState<_CapabilityTab> {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            for (final c in caps) _capabilityTile(c, theme),
+                            for (final p in providers)
+                              _providerTile(p, theme),
                           ],
                         );
                       },
@@ -968,6 +1313,164 @@ class _CapabilityTabState extends ConsumerState<_CapabilityTab> {
                   ],
                 ),
               ),
+            ),
+            const SizedBox(height: 12),
+            const _CatalogSection(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _providerTile(CapabilityProviderSummary p, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: p.isUp
+                      ? Colors.green.shade400
+                      : theme.colorScheme.error,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '${p.appName} · ${p.mode.toUpperCase()} · '
+                  '${p.capabilityCount} 能力',
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: p.source == 'console'
+                      ? Colors.blue.withValues(alpha: 0.12)
+                      : Colors.grey.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  p.source == 'console' ? '前端配置' : '外部注册',
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: p.source == 'console'
+                          ? Colors.blue.shade700
+                          : theme.colorScheme.onSurfaceVariant),
+                ),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.edit_outlined, size: 17),
+                tooltip: '编辑',
+                onPressed: () => _showProviderDialog(providerId: p.providerId),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline, size: 17),
+                tooltip: '删除',
+                onPressed: () => _confirmDelete(p),
+              ),
+            ],
+          ),
+          if (p.baseUrl.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 13, top: 2),
+              child: Text(
+                '${p.baseUrl} · 认证: ${p.authModel}'
+                '${p.authModel != 'none' ? (p.authValueMasked.isNotEmpty ? '（${p.authValueMasked}）' : '') : ''}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 10,
+                    color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 能力中心目录区（只读）：已注册能力的实例状态。
+class _CatalogSection extends ConsumerStatefulWidget {
+  const _CatalogSection();
+
+  @override
+  ConsumerState<_CatalogSection> createState() => _CatalogSectionState();
+}
+
+class _CatalogSectionState extends ConsumerState<_CatalogSection> {
+  Future<List<CapabilitySummary>>? _capabilities;
+
+  @override
+  void initState() {
+    super.initState();
+    _capabilities = ref
+        .read(systemRepositoryProvider.future)
+        .then((repo) => repo.capabilities())
+        .catchError((Object e) => <CapabilitySummary>[]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('能力目录',
+                style:
+                    TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            FutureBuilder<List<CapabilitySummary>>(
+              future: _capabilities,
+              builder: (context, snap) {
+                if (snap.connectionState != ConnectionState.done) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 14),
+                    child: Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child:
+                            CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  );
+                }
+                final caps = snap.data ?? const [];
+                if (caps.isEmpty) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Text(
+                      '暂无已注册能力',
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.5,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final c in caps) _capabilityTile(c, theme),
+                  ],
+                );
+              },
             ),
           ],
         ),
@@ -1014,7 +1517,8 @@ class _CapabilityTabState extends ConsumerState<_CapabilityTab> {
                   Expanded(
                     child: Text(
                       '${inst.appName} · ${inst.mode.toUpperCase()} · '
-                      '${inst.endpointMode} · ${inst.status}',
+                      '${inst.endpointMode} · ${inst.status}'
+                      '${inst.source == 'console' ? ' · 前端配置' : ''}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -1028,6 +1532,39 @@ class _CapabilityTabState extends ConsumerState<_CapabilityTab> {
         ],
       ),
     );
+  }
+}
+
+/// 能力编辑器表单项（控制器集合，随对话框生命周期）。
+class _CapFormItem {
+  final name = TextEditingController();
+  final description = TextEditingController();
+  final parameters = TextEditingController();
+  final endpointPath = TextEditingController();
+  var endpointMethod = 'GET';
+  var retryable = false;
+  var endpointMode = 'sync';
+  final statusPath = TextEditingController();
+  final resultPath = TextEditingController();
+  final pollIntervalMs = TextEditingController(text: '3000');
+  final pollTimeoutMs = TextEditingController(text: '600000');
+
+  _CapFormItem.defaults();
+
+  factory _CapFormItem.from(CapabilityDefinition c) {
+    final it = _CapFormItem.defaults();
+    it.name.text = c.name;
+    it.description.text = c.description;
+    it.parameters.text = jsonEncode(c.parameters);
+    it.endpointPath.text = c.endpointPath;
+    it.endpointMethod = c.endpointMethod;
+    it.retryable = c.retryable;
+    it.endpointMode = c.endpointMode;
+    it.statusPath.text = c.statusPath ?? '';
+    it.resultPath.text = c.resultPath ?? '';
+    it.pollIntervalMs.text = (c.pollIntervalMs ?? 3000).toString();
+    it.pollTimeoutMs.text = (c.pollTimeoutMs ?? 600000).toString();
+    return it;
   }
 }
 
