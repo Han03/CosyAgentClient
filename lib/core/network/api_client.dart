@@ -8,7 +8,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../models/agent_message.dart';
 import '../../models/agent_stream_event.dart';
 import '../../models/agent_result.dart';
+import '../../models/capability_catalog.dart';
 import '../../models/model_catalog.dart';
+import '../../models/model_management.dart';
 import '../../models/agent_task.dart';
 import '../../models/session_summary.dart';
 import '../../models/knowledge_hit.dart';
@@ -462,4 +464,123 @@ Future<ModelCatalog> getModelCatalog(Dio dio) async {
 Future<JsonMap> getHealth(Dio dio) async {
   final resp = await dio.get<Map<String, dynamic>>('/actuator/health');
   return resp.data ?? {};
+}
+
+/// 能力注册中心目录（脱敏）：已注册的外部项目能力及实例状态。
+Future<List<CapabilitySummary>> getCapabilityCatalog(Dio dio) async {
+  final resp = await dio.get<Map<String, dynamic>>('/api/agent/capabilities');
+  return unwrapList(resp.data, CapabilitySummary.fromJson);
+}
+
+// ---- 模型管理平台化：平台/模型/规则 CRUD + 连通性测试（后端为执行权威） ----
+
+/// 平台列表（掩码 + 模型数）。
+Future<List<ProviderSummary>> getModelProviders(Dio dio) async {
+  final resp = await dio.get<Map<String, dynamic>>(
+      '/api/agent/model-routing/providers');
+  return unwrapList(resp.data, ProviderSummary.fromJson);
+}
+
+/// 平台详情（含模型规格完整元数据）。
+Future<ProviderDetail> getModelProviderDetail(Dio dio, String name) async {
+  final resp = await dio.get<Map<String, dynamic>>(
+      '/api/agent/model-routing/providers/$name');
+  return ProviderDetail.fromJson(_unwrapData(resp.data));
+}
+
+/// 新增平台（api-key 必填一次，落库加密）。
+Future<bool> createModelProvider(
+    Dio dio, String name, Map<String, dynamic> body) async {
+  final resp = await dio.post<Map<String, dynamic>>(
+      '/api/agent/model-routing/providers/$name',
+      data: body);
+  return _unwrapBool(resp.data);
+}
+
+/// 更新平台（api-key 空 = 保持原值）。
+Future<bool> updateModelProvider(
+    Dio dio, String name, Map<String, dynamic> body) async {
+  final resp = await dio.put<Map<String, dynamic>>(
+      '/api/agent/model-routing/providers/$name',
+      data: body);
+  return _unwrapBool(resp.data);
+}
+
+/// 删除平台（被路由规则引用时后端拒绝）。
+Future<bool> deleteModelProvider(Dio dio, String name) async {
+  final resp = await dio.delete<Map<String, dynamic>>(
+      '/api/agent/model-routing/providers/$name');
+  return _unwrapBool(resp.data);
+}
+
+/// 平台下新增模型规格。
+Future<bool> addModelSpec(Dio dio, String name, String modelId,
+    Map<String, dynamic> body) async {
+  final resp = await dio.post<Map<String, dynamic>>(
+      '/api/agent/model-routing/providers/$name/models/$modelId',
+      data: body);
+  return _unwrapBool(resp.data);
+}
+
+/// 更新模型规格。
+Future<bool> updateModelSpec(Dio dio, String name, String modelId,
+    Map<String, dynamic> body) async {
+  final resp = await dio.put<Map<String, dynamic>>(
+      '/api/agent/model-routing/providers/$name/models/$modelId',
+      data: body);
+  return _unwrapBool(resp.data);
+}
+
+/// 删除模型规格。
+Future<bool> deleteModelSpec(
+    Dio dio, String name, String modelId) async {
+  final resp = await dio.delete<Map<String, dynamic>>(
+      '/api/agent/model-routing/providers/$name/models/$modelId');
+  return _unwrapBool(resp.data);
+}
+
+/// 路由规则整体读取（类型 → 有序候选链）。
+Future<Map<String, List<String>>> getModelRules(Dio dio) async {
+  final resp =
+      await dio.get<Map<String, dynamic>>('/api/agent/model-routing/rules');
+  final data = _unwrapData(resp.data);
+  final result = <String, List<String>>{};
+  data.forEach((k, v) {
+    result[k] = (v as List?)?.map((e) => e.toString()).toList() ?? const [];
+  });
+  return result;
+}
+
+/// 路由规则整体更新（顺序即降级顺序）。
+Future<bool> updateModelRules(
+    Dio dio, Map<String, List<String>> rules) async {
+  final resp = await dio.put<Map<String, dynamic>>(
+      '/api/agent/model-routing/rules',
+      data: rules);
+  return _unwrapBool(resp.data);
+}
+
+/// 连通性测试：对指定平台（+模型）发最小请求，返回 {ok, durationMs, sample?, error?}。
+Future<Map<String, dynamic>> testModelConnection(
+    Dio dio, Map<String, dynamic> body) async {
+  final resp = await dio.post<Map<String, dynamic>>(
+      '/api/agent/model-routing/test',
+      data: body);
+  return _unwrapData(resp.data);
+}
+
+/// 解包 Result.data（Map）。
+Map<String, dynamic> _unwrapData(dynamic body) {
+  if (body is! Map<String, dynamic>) {
+    throw const ApiException(-3, '响应格式异常');
+  }
+  final code = body['code'] as int? ?? 0;
+  if (code != 0) {
+    throw ApiException(code, body['message'] as String? ?? '未知错误');
+  }
+  final data = body['data'];
+  if (data is! Map<String, dynamic>) {
+    throw const ApiException(-3, '响应缺少 data 对象');
+  }
+  return data;
 }
