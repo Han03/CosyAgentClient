@@ -29,6 +29,8 @@ class AppSettings {
       String.fromEnvironment('COSY_MOCK_ENABLED', defaultValue: 'false') == 'true';
   static const _defaultModelDefault =
       String.fromEnvironment('COSY_DEFAULT_MODEL', defaultValue: 'auto');
+  static const _defaultRouteTypeDefault =
+      String.fromEnvironment('COSY_DEFAULT_ROUTE_TYPE', defaultValue: 'auto');
 
   final String baseUrl;
   final String apiKey;
@@ -39,11 +41,15 @@ class AppSettings {
   /// 会话默认模型选择：'auto'（后端路由链）或 '平台/模型'（锁定单候选）。
   final String defaultModel;
 
+  /// 会话默认路由类型：'auto'（default 链）或路由类型（如 reasoning）。
+  final String defaultRouteType;
+
   const AppSettings({
     required this.baseUrl,
     required this.apiKey,
     this.mockEnabled = false,
     this.defaultModel = 'auto',
+    this.defaultRouteType = 'auto',
   });
 
   factory AppSettings.defaults() => AppSettings(
@@ -51,18 +57,21 @@ class AppSettings {
         apiKey: _apiKeyDefault,
         mockEnabled: _mockEnabledDefault,
         defaultModel: _defaultModelDefault,
+        defaultRouteType: _defaultRouteTypeDefault,
       );
 
   AppSettings copyWith(
           {String? baseUrl,
           String? apiKey,
           bool? mockEnabled,
-          String? defaultModel}) =>
+          String? defaultModel,
+          String? defaultRouteType}) =>
       AppSettings(
         baseUrl: baseUrl ?? this.baseUrl,
         apiKey: apiKey ?? this.apiKey,
         mockEnabled: mockEnabled ?? this.mockEnabled,
         defaultModel: defaultModel ?? this.defaultModel,
+        defaultRouteType: defaultRouteType ?? this.defaultRouteType,
       );
 }
 
@@ -74,6 +83,7 @@ class SettingsStore {
   static const _keyApiKey = 'cosy.apiKey';
   static const _keyMockEnabled = 'cosy.mockEnabled';
   static const _keyDefaultModel = 'cosy.defaultModel';
+  static const _keyDefaultRouteType = 'cosy.defaultRouteType';
 
   Future<AppSettings> load() async {
     final baseUrl =
@@ -82,11 +92,13 @@ class SettingsStore {
     final mockEnabled =
         await _secure.read(key: _keyMockEnabled) ?? AppSettings.defaults().mockEnabled.toString();
     final defaultModel = await _secure.read(key: _keyDefaultModel) ?? 'auto';
+    final defaultRouteType = await _secure.read(key: _keyDefaultRouteType) ?? 'auto';
     return AppSettings(
       baseUrl: baseUrl,
       apiKey: apiKey,
       mockEnabled: mockEnabled == 'true',
       defaultModel: defaultModel,
+      defaultRouteType: defaultRouteType,
     );
   }
 
@@ -99,6 +111,7 @@ class SettingsStore {
     }
     await _secure.write(key: _keyMockEnabled, value: settings.mockEnabled.toString());
     await _secure.write(key: _keyDefaultModel, value: settings.defaultModel);
+    await _secure.write(key: _keyDefaultRouteType, value: settings.defaultRouteType);
   }
 }
 
@@ -298,7 +311,7 @@ typedef JsonMap = Map<String, dynamic>;
 /// SSE 流式对话：逐事件产出 thinking/tool/toolResult/answer/done/error，
 /// 客户端可实时渲染执行过程（与主流 Agent 工具一致的流式体验）。
 Stream<AgentStreamEvent> streamChat(Dio dio, String? sessionId, String message,
-    {String modelChoice = 'auto'}) async* {
+    {String modelChoice = 'auto', String routeType = 'auto'}) async* {
   final resp = await dio.post<ResponseBody>(
     '/api/agent/chat/stream',
     data: {
@@ -309,7 +322,7 @@ Stream<AgentStreamEvent> streamChat(Dio dio, String? sessionId, String message,
       responseType: ResponseType.stream,
       // 流式长任务（多轮工具调用 + mock 延迟）放宽接收超时；连接超时保持 10s
       receiveTimeout: const Duration(minutes: 2),
-      headers: {'X-Cosy-Model': modelChoice},
+      headers: {'X-Cosy-Model': modelChoice, 'X-Cosy-Route-Type': routeType},
     ),
   );
   final body = resp.data;
@@ -326,22 +339,24 @@ Stream<AgentStreamEvent> streamChat(Dio dio, String? sessionId, String message,
 }
 
 Future<AgentResult> postChat(Dio dio, String? sessionId, String message,
-    {String modelChoice = 'auto'}) async {
+    {String modelChoice = 'auto', String routeType = 'auto'}) async {
   final resp = await dio.post<Map<String, dynamic>>('/api/agent/chat',
       data: {
         if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
         'message': message,
       },
-      options: Options(headers: {'X-Cosy-Model': modelChoice}));
+      options: Options(
+          headers: {'X-Cosy-Model': modelChoice, 'X-Cosy-Route-Type': routeType}));
   return unwrap(resp.data, AgentResult.fromJson);
 }
 
 Future<AgentResult> postResume(Dio dio, String taskId, String message,
-    {String modelChoice = 'auto'}) async {
+    {String modelChoice = 'auto', String routeType = 'auto'}) async {
   final resp = await dio.post<Map<String, dynamic>>(
       '/api/agent/tasks/$taskId/resume',
       data: {'message': message},
-      options: Options(headers: {'X-Cosy-Model': modelChoice}));
+      options: Options(
+          headers: {'X-Cosy-Model': modelChoice, 'X-Cosy-Route-Type': routeType}));
   return unwrap(resp.data, AgentResult.fromJson);
 }
 

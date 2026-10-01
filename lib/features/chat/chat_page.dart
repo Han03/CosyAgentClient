@@ -46,8 +46,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void initState() {
     super.initState();
-    // 恢复会话模型选择（本地持久化），后续由选择条修改
+    // 恢复会话模型选择与路由类型（本地持久化），后续由选择条修改
     ref.read(defaultModelProvider.notifier).load();
+    ref.read(defaultRouteTypeProvider.notifier).load();
     if (widget.standalone) {
       // 移动端栈式页面：构造参数驱动
       _sessionId = widget.sessionId;
@@ -145,8 +146,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     try {
       final repo = await ref.read(chatRepositoryProvider.future);
       final modelChoice = ref.read(defaultModelProvider);
+      final routeType = ref.read(defaultRouteTypeProvider);
       // 流式对话：逐事件实时渲染（思考 / 工具步骤 / 回答 / 终态摘要）
-      final stream = repo.chatStream(_sessionId, userText, modelChoice: modelChoice);
+      final stream = repo.chatStream(_sessionId, userText,
+          modelChoice: modelChoice, routeType: routeType);
       await for (final event in stream) {
         if (!mounted) return; // 页面销毁：停止消费流
         switch (event.type) {
@@ -268,7 +271,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     try {
       final repo = await ref.read(chatRepositoryProvider.future);
       final modelChoice = ref.read(defaultModelProvider);
-      final result = await repo.resume(taskId, '继续', modelChoice: modelChoice);
+      final routeType = ref.read(defaultRouteTypeProvider);
+      final result = await repo.resume(taskId, '继续',
+          modelChoice: modelChoice, routeType: routeType);
       if (!mounted) return;
       setState(() {
         _messages.add(AgentMessage(role: 'ASSISTANT', content: result.answer));
@@ -1085,37 +1090,74 @@ class _ModelBar extends ConsumerWidget {
       orElse: () => const <String>[],
     );
     final label = current == 'auto' ? 'Auto' : current;
-    return PopupMenuButton<String>(
-      tooltip: '选择模型',
-      initialValue: current,
-      onSelected: (v) => ref.read(defaultModelProvider.notifier).select(v),
-      itemBuilder: (context) => [
-        const PopupMenuItem(value: 'auto', child: Text('Auto 自动选择')),
-        ...models.map((m) => PopupMenuItem(value: m, child: Text(m))),
-      ],
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-          border: Border.all(
-              color: theme.colorScheme.outline.withValues(alpha: 0.4)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.smart_toy_outlined,
-                size: 13, color: theme.colorScheme.onSurfaceVariant),
-            const SizedBox(width: 5),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 12, color: theme.colorScheme.onSurface)),
-            const SizedBox(width: 2),
-            Icon(Icons.arrow_drop_down,
-                size: 15, color: theme.colorScheme.onSurfaceVariant),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        PopupMenuButton<String>(
+          tooltip: '选择模型',
+          initialValue: current,
+          onSelected: (v) => ref.read(defaultModelProvider.notifier).select(v),
+          itemBuilder: (context) => [
+            const PopupMenuItem(value: 'auto', child: Text('Auto 自动选择')),
+            ...models.map((m) => PopupMenuItem(value: m, child: Text(m))),
           ],
+          child: _barChip(theme, Icons.smart_toy_outlined, label),
         ),
-      ),
+        const SizedBox(width: 6),
+        _RouteTypeBar(),
+      ],
     );
   }
+}
+
+/// 路由类型选择条（Auto=default 链 / 具体类型如 reasoning；目录来自后端权威配置）。
+class _RouteTypeBar extends ConsumerWidget {
+  const _RouteTypeBar();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final current = ref.watch(defaultRouteTypeProvider);
+    final catalog = ref.watch(modelCatalogProvider);
+    final routeTypes = catalog.maybeWhen(
+      data: (c) => c.routeTypes,
+      orElse: () => const <String>[],
+    );
+    final label = current == 'auto' ? 'Auto' : current;
+    return PopupMenuButton<String>(
+      tooltip: '选择路由类型',
+      initialValue: current,
+      onSelected: (v) => ref.read(defaultRouteTypeProvider.notifier).select(v),
+      itemBuilder: (context) => [
+        const PopupMenuItem(value: 'auto', child: Text('Auto 默认链')),
+        ...routeTypes.map(
+            (t) => PopupMenuItem(value: t, child: Text('$t 路由链'))),
+      ],
+      child: _barChip(theme, Icons.route_outlined, label),
+    );
+  }
+}
+
+/// 选择条样式（模型/路由类型共用）。
+Widget _barChip(ThemeData theme, IconData icon, String label) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+      color: theme.colorScheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.4)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: theme.colorScheme.onSurfaceVariant),
+        const SizedBox(width: 5),
+        Text(label,
+            style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface)),
+        const SizedBox(width: 2),
+        Icon(Icons.arrow_drop_down,
+            size: 15, color: theme.colorScheme.onSurfaceVariant),
+      ],
+    ),
+  );
 }

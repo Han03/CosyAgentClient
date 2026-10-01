@@ -15,15 +15,18 @@ class ChatRepository {
       getSessionMessages(_dio, sessionId);
 
 Future<AgentResult> chat(String? sessionId, String message,
-          {String modelChoice = 'auto'}) =>
-      postChat(_dio, sessionId, message, modelChoice: modelChoice);
+          {String modelChoice = 'auto', String routeType = 'auto'}) =>
+      postChat(_dio, sessionId, message,
+          modelChoice: modelChoice, routeType: routeType);
 
   /// 流式对话：实时事件流（thinking/tool/toolResult/answer/done/error）。
   Stream<AgentStreamEvent> chatStream(String? sessionId, String message,
-          {String modelChoice = 'auto'}) =>
-      streamChat(_dio, sessionId, message, modelChoice: modelChoice);
+          {String modelChoice = 'auto', String routeType = 'auto'}) =>
+      streamChat(_dio, sessionId, message,
+          modelChoice: modelChoice, routeType: routeType);
 
   Future<AgentResult> resume(String taskId, String message,
-          {String modelChoice = 'auto'}) =>
-      postResume(_dio, taskId, message, modelChoice: modelChoice);
+          {String modelChoice = 'auto', String routeType = 'auto'}) =>
+      postResume(_dio, taskId, message,
+          modelChoice: modelChoice, routeType: routeType);
 }

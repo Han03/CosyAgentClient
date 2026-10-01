@@ -18,6 +18,7 @@ final bootstrapProvider = FutureProvider<void>((ref) async {
     await ref.read(sessionListProvider.future);
     await ref.read(modelCatalogProvider.future);
     await ref.read(defaultModelProvider.notifier).load();
+    await ref.read(defaultRouteTypeProvider.notifier).load();
   } catch (e) {
     CosyLogger.instance.warn('boot', '启动数据准备未完成(尽力而为): $e');
   }
@@ -100,6 +101,33 @@ class DefaultModelNotifier extends StateNotifier<String> {
     await _ref
         .read(settingsStoreProvider)
         .save(settings.copyWith(defaultModel: model));
+  }
+}
+
+/// 会话路由类型选择：'auto'（default 链）或具体类型（如 reasoning）。
+/// 选择持久化到 cosy.defaultRouteType，聊天请求经 X-Cosy-Route-Type 头下发。
+final defaultRouteTypeProvider =
+    StateNotifierProvider<DefaultRouteTypeNotifier, String>(
+        (ref) => DefaultRouteTypeNotifier(ref));
+
+class DefaultRouteTypeNotifier extends StateNotifier<String> {
+  DefaultRouteTypeNotifier(this._ref) : super('auto');
+
+  final Ref _ref;
+
+  /// 启动/进入会话页时从本地存储恢复。
+  Future<void> load() async {
+    final settings = await _ref.read(settingsProvider.future);
+    state = settings.defaultRouteType;
+  }
+
+  /// 选择并持久化。
+  Future<void> select(String routeType) async {
+    state = routeType;
+    final settings = await _ref.read(settingsProvider.future);
+    await _ref
+        .read(settingsStoreProvider)
+        .save(settings.copyWith(defaultRouteType: routeType));
   }
 }
 
