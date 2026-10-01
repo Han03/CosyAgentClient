@@ -551,13 +551,14 @@ Future<Map<String, List<String>>> getModelRules(Dio dio) async {
   return result;
 }
 
-/// 路由规则整体更新（顺序即降级顺序）。
-Future<bool> updateModelRules(
+/// 路由规则整体更新（顺序即降级顺序；候选平台必须已注册）。
+/// 返回 {registeredMissing: [...]} —— 本次自动补登记的模型（规则引用未登记模型时）。
+Future<Map<String, dynamic>> updateModelRules(
     Dio dio, Map<String, List<String>> rules) async {
   final resp = await dio.put<Map<String, dynamic>>(
       '/api/agent/model-routing/rules',
       data: rules);
-  return _unwrapBool(resp.data);
+  return _unwrapData(resp.data);
 }
 
 /// 连通性测试：对指定平台（+模型）发最小请求，返回 {ok, durationMs, sample?, error?}。

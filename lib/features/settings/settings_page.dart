@@ -509,56 +509,39 @@ class _ModelManagementTabState extends ConsumerState<_ModelManagementTab> {
     });
   }
 
-  // ---- 路由规则 ----
+  // ---- 路由规则（结构化编辑器：候选引用已登记平台模型） ----
 
   Future<void> _editRules(Map<String, List<String>> rules) async {
-    final controller = TextEditingController(
-        text: rules.entries
-            .map((e) => '${e.key}: ${e.value.join(',')}')
-            .join('\n'));
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('路由规则'),
-        content: SizedBox(
-          width: 420,
-          child: TextField(
-            controller: controller,
-            maxLines: 8,
-            decoration: const InputDecoration(
-              labelText: '每行一条：类型: 候选1,候选2（顺序即降级顺序）',
-              hintText: 'default: zhipu/glm-4-flash,aliyun/qwen-max\nreasoning: zhipu/glm-4-flash',
-            ),
-          ),
+    final repo = await ref.read(systemRepositoryProvider.future);
+    List<ProviderSummary> providers;
+    try {
+      providers = await repo.modelProviders();
+    } on Exception {
+      providers = const [];
+    }
+    // 并行拉各平台模型规格（编辑器下拉数据源）
+    final modelsByProvider = <String, List<ModelSpecInfo>>{};
+    try {
+      final details = await Future.wait(
+          providers.map((p) => repo.modelProviderDetail(p.name)));
+      for (var i = 0; i < providers.length; i++) {
+        modelsByProvider[providers[i].name] = details[i].models;
+      }
+    } on Exception {
+      // 降级：编辑器仍可打开，候选下拉仅平台可用
+    }
+    if (!mounted) return;
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _RulesEditorPage(
+          initialRules: rules,
+          providers: providers,
+          modelsByProvider: modelsByProvider,
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
-          GradientButton(label: '保存', onPressed: () {
-            Navigator.pop(context, true);
-          }),
-        ],
       ),
     );
-    if (result != true) return;
-    final parsed = <String, List<String>>{};
-    for (final line in controller.text.split('\n')) {
-      final idx = line.indexOf(':');
-      if (idx <= 0) continue;
-      final type = line.substring(0, idx).trim();
-      final candidates = line
-          .substring(idx + 1)
-          .split(',')
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList();
-      if (type.isNotEmpty) parsed[type] = candidates;
-    }
-    await _run(() async {
-      final repo = await ref.read(systemRepositoryProvider.future);
-      await repo.updateModelRules(parsed);
-    });
+    if (saved == true) _reload();
   }
 
   // ---- 连通性测试 ----
@@ -1148,4 +1131,314 @@ class _LogTabState extends ConsumerState<_LogTab> {
       ),
     );
   }
+}
+
+/// 结构化路由规则编辑器：候选 = 已注册平台 + 该平台已登记模型的强引用。
+///
+/// 规则类型 → 有序候选链；候选只能从"平台 × 该平台模型规格"中选择（防拼写错误），
+/// 顺序可上移/下移（降级顺序）；规则引用的模型未登记时保存由后端自动补登记并返回提示。
+class _RulesEditorPage extends ConsumerStatefulWidget {
+  final Map<String, List<String>> initialRules;
+  final List<ProviderSummary> providers;
+  final Map<String, List<ModelSpecInfo>> modelsByProvider;
+
+  const _RulesEditorPage({
+    required this.initialRules,
+    required this.providers,
+    required this.modelsByProvider,
+  });
+
+  @override
+  ConsumerState<_RulesEditorPage> createState() => _RulesEditorPageState();
+}
+
+class _RulesEditorPageState extends ConsumerState<_RulesEditorPage> {
+  late final List<_RuleEntry> _entries;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _entries = widget.initialRules.entries.map((e) {
+      final entry = _RuleEntry(e.key);
+      for (final c in e.value) {
+        final idx = c.indexOf('/');
+        if (idx > 0) {
+          entry.candidates
+              .add(_Candidate(c.substring(0, idx), c.substring(idx + 1)));
+        }
+      }
+      return entry;
+    }).toList();
+    if (_entries.isEmpty) _entries.add(_RuleEntry('default'));
+  }
+
+  List<String> _modelIdsOf(String platform) =>
+      widget.modelsByProvider[platform]?.map((m) => m.modelId).toList() ??
+      const [];
+
+  Future<void> _save() async {
+    if (_saving) return;
+    final rules = <String, List<String>>{};
+    for (final e in _entries) {
+      final type = e.type.text.trim();
+      if (type.isEmpty) continue;
+      rules[type] = e.candidates.map((c) => '${c.platform}/${c.model}').toList();
+    }
+    setState(() => _saving = true);
+    try {
+      final repo = await ref.read(systemRepositoryProvider.future);
+      final result = await repo.updateModelRules(rules);
+      final registered = result['registeredMissing'] as List? ?? const [];
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(registered.isEmpty
+            ? '路由规则已保存'
+            : '已保存，并自动登记规则引用的模型：${registered.join('、')}'),
+      ));
+      Navigator.pop(context, true);
+    } on Exception catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('保存失败：${e is ApiException ? e.message : e}'),
+        backgroundColor: Theme.of(context).colorScheme.error,
+      ));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('路由规则'),
+        actions: [
+          TextButton(
+              onPressed: _saving ? null : _save,
+              child: Text(_saving ? '保存中…' : '保存')),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            '候选 = 已注册平台 + 该平台已登记模型；顺序即降级顺序。'
+            '规则引用的模型未登记时保存将自动登记。',
+            style: TextStyle(
+                fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 12),
+          for (var i = 0; i < _entries.length; i++) _ruleCard(i, theme),
+          const SizedBox(height: 8),
+          Center(
+            child: TextButton.icon(
+              onPressed: () => setState(
+                  () => _entries.add(_RuleEntry('route${_entries.length + 1}'))),
+              icon: const Icon(Icons.add),
+              label: const Text('添加规则类型'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ruleCard(int index, ThemeData theme) {
+    final entry = _entries[index];
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: entry.type,
+                    decoration: const InputDecoration(
+                        labelText: '规则类型', isDense: true),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '删除该规则',
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  onPressed: _entries.length > 1
+                      ? () => setState(() => _entries.removeAt(index))
+                      : null,
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            for (var j = 0; j < entry.candidates.length; j++)
+              _candidateRow(entry, j),
+            _addCandidateRow(entry),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _candidateRow(_RuleEntry entry, int j) {
+    final c = entry.candidates[j];
+    final models = _modelIdsOf(c.platform);
+    final modelMissing = models.isNotEmpty && !models.contains(c.model);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: DropdownButtonFormField<String>(
+              initialValue: c.platform,
+              isDense: true,
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              ),
+              items: [
+                for (final p in widget.providers)
+                  DropdownMenuItem(
+                      value: p.name,
+                      child: Text(p.name, overflow: TextOverflow.ellipsis)),
+              ],
+              onChanged: (v) => setState(() {
+                c.platform = v ?? c.platform;
+                final ids = _modelIdsOf(c.platform);
+                c.model = ids.isEmpty
+                    ? ''
+                    : (ids.contains(c.model) ? c.model : ids.first);
+              }),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 3,
+            child: DropdownButtonFormField<String>(
+              initialValue: models.contains(c.model) ? c.model : null,
+              isDense: true,
+              decoration: InputDecoration(
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                labelText: modelMissing && c.model.isNotEmpty ? '⚠ 将自动登记' : null,
+              ),
+              items: [
+                for (final m in models)
+                  DropdownMenuItem(
+                      value: m, child: Text(m, overflow: TextOverflow.ellipsis)),
+              ],
+              onChanged: (v) => setState(() => c.model = v ?? c.model),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.arrow_upward, size: 16),
+            onPressed: j == 0
+                ? null
+                : () => setState(() {
+                      final t = entry.candidates[j];
+                      entry.candidates[j] = entry.candidates[j - 1];
+                      entry.candidates[j - 1] = t;
+                    }),
+          ),
+          IconButton(
+            icon: const Icon(Icons.arrow_downward, size: 16),
+            onPressed: j == entry.candidates.length - 1
+                ? null
+                : () => setState(() {
+                      final t = entry.candidates[j];
+                      entry.candidates[j] = entry.candidates[j + 1];
+                      entry.candidates[j + 1] = t;
+                    }),
+          ),
+          IconButton(
+            icon: const Icon(Icons.remove_circle_outline, size: 16),
+            onPressed: () => setState(() => entry.candidates.removeAt(j)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _addCandidateRow(_RuleEntry entry) {
+    String? platform;
+    String? model;
+    return StatefulBuilder(
+      builder: (context, setLocal) {
+        final models =
+            platform == null ? const <String>[] : _modelIdsOf(platform!);
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: DropdownButtonFormField<String>(
+                  initialValue: null,
+                  isDense: true,
+                  hint: const Text('平台'),
+                  items: [
+                    for (final p in widget.providers)
+                      DropdownMenuItem(value: p.name, child: Text(p.name)),
+                  ],
+                  onChanged: (v) => setLocal(() {
+                    platform = v;
+                    model = null;
+                  }),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 3,
+                child: DropdownButtonFormField<String>(
+                  initialValue: null,
+                  isDense: true,
+                  hint: const Text('模型'),
+                  items: [
+                    for (final m in models)
+                      DropdownMenuItem(value: m, child: Text(m)),
+                  ],
+                  onChanged: (v) => setLocal(() => model = v),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.add_circle_outline, size: 18),
+                onPressed: platform == null || model == null
+                    ? null
+                    : () {
+                        setState(() =>
+                            entry.candidates.add(_Candidate(platform!, model!)));
+                        setLocal(() {
+                          platform = null;
+                          model = null;
+                        });
+                      },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 编辑器内部：一条规则类型 + 有序候选。
+class _RuleEntry {
+  final TextEditingController type;
+  final List<_Candidate> candidates;
+
+  _RuleEntry(String t)
+      : type = TextEditingController(text: t),
+        candidates = [];
+}
+
+/// 编辑器内部：候选（平台 + 模型，强引用平台模型规格）。
+class _Candidate {
+  String platform;
+  String model;
+
+  _Candidate(this.platform, this.model);
 }

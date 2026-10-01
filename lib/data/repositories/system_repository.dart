@@ -49,7 +49,8 @@ class SystemRepository {
 
   Future<Map<String, List<String>>> modelRules() => net.getModelRules(_dio);
 
-  Future<bool> updateModelRules(Map<String, List<String>> rules) =>
+  Future<Map<String, dynamic>> updateModelRules(
+          Map<String, List<String>> rules) =>
       net.updateModelRules(_dio, rules);
 
   Future<Map<String, dynamic>> testModelConnection(
