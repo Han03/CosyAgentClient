@@ -67,6 +67,10 @@ class SystemRepository {
 
   Future<Map<String, List<String>>> modelRules() => net.getModelRules(_dio);
 
+  /// 自动路由策略（v2.1）：{autoResolver, autoRules, scoringWeights, ...}；失败返回空 map
+  Future<Map<String, dynamic>> modelRoutingConfig() =>
+      net.getModelRoutingConfig(_dio);
+
   Future<Map<String, dynamic>> updateModelRules(
           Map<String, List<String>> rules) =>
       net.updateModelRules(_dio, rules);

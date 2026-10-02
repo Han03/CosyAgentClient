@@ -609,6 +609,18 @@ Future<Map<String, List<String>>> getModelRules(Dio dio) async {
   return result;
 }
 
+/// 自动路由策略读取（v2.1）：返回 {autoResolver, autoRules, scoringWeights, routes, ...}；
+/// 失败返回空 map（旧后端兼容，不阻断展示）。
+Future<Map<String, dynamic>> getModelRoutingConfig(Dio dio) async {
+  try {
+    final resp = await dio
+        .get<Map<String, dynamic>>('/api/agent/model-routing');
+    return _unwrapData(resp.data);
+  } on Exception {
+    return const {};
+  }
+}
+
 /// 路由规则整体更新（顺序即降级顺序；候选平台必须已注册）。
 /// 返回 {registeredMissing: [...]} —— 本次自动补登记的模型（规则引用未登记模型时）。
 Future<Map<String, dynamic>> updateModelRules(

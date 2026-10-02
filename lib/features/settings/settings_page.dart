@@ -286,7 +286,7 @@ class _ModelManagementTab extends ConsumerStatefulWidget {
 }
 
 class _ModelManagementTabState extends ConsumerState<_ModelManagementTab> {
-  Future<(List<ProviderSummary>, Map<String, List<String>>)>? _future;
+  Future<(List<ProviderSummary>, Map<String, List<String>>, String)>? _future;
 
   @override
   void initState() {
@@ -300,9 +300,14 @@ class _ModelManagementTabState extends ConsumerState<_ModelManagementTab> {
         .then((repo) async {
           final providers = await repo.modelProviders();
           final rules = await repo.modelRules();
-          return (providers, rules);
+          final auto = await repo.modelRoutingConfig();
+          // 自动路由档位（v2.1）：static / task-tag / scoring；旧后端无字段时显示未知
+          final resolver =
+              auto['autoResolver']?.toString() ?? '未知（旧后端）';
+          return (providers, rules, resolver);
         })
-        .catchError((Object e) => (<ProviderSummary>[], <String, List<String>>{}));
+        .catchError((Object e) =>
+            (<ProviderSummary>[], <String, List<String>>{}, '未知'));
     setState(() {});
   }
 
@@ -640,7 +645,7 @@ class _ModelManagementTabState extends ConsumerState<_ModelManagementTab> {
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 720),
-        child: FutureBuilder<(List<ProviderSummary>, Map<String, List<String>>)>(
+        child: FutureBuilder<(List<ProviderSummary>, Map<String, List<String>>, String)>(
           future: _future,
           builder: (context, snap) {
             if (snap.connectionState != ConnectionState.done) {
@@ -650,11 +655,28 @@ class _ModelManagementTabState extends ConsumerState<_ModelManagementTab> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ));
             }
-            final (providers, rules) =
-                snap.data ?? (const <ProviderSummary>[], const <String, List<String>>{});
+            final (providers, rules, autoResolver) =
+                snap.data ?? (const <ProviderSummary>[], const <String, List<String>>{}, '未知');
             return ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                // 自动路由策略（v2.1：只读展示决策档位，规则编辑在路由规则卡片）
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.route_outlined, size: 18),
+                        const SizedBox(width: 8),
+                        const Text('自动路由策略：'),
+                        const SizedBox(width: 8),
+                        Text(autoResolver,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                                color: theme.colorScheme.primary)),
+                      ],
+                    ),
+                  ),
+                ),
                 // 路由规则摘要 + 操作
                 Card(
                   child: Padding(
