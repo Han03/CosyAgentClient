@@ -2086,7 +2086,7 @@ class _LlmLogsTabState extends ConsumerState<_LlmLogsTab> {
                 _kv('模型', detail['chosenModel'] ?? '（全部失败）'),
                 _kv('路由类型', detail['routeType'] ?? ''),
                 _kv('候选链', detail['candidateChain'] ?? ''),
-                _kv('尝试/降级', detail['attempts'] ?? '' == ''
+                _kv('尝试/降级', (detail['attempts'] ?? '') == ''
                     ? '无降级'
                     : '${detail['attempts']} → ${detail['reasons']}'),
                 _kv('耗时', '${detail['latencyMs']} ms'),
