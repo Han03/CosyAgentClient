@@ -621,6 +621,53 @@ Future<Map<String, dynamic>> getModelRoutingConfig(Dio dio) async {
   }
 }
 
+// ---- 大模型调用记录 ----
+
+/// 调用记录分页列表（条件均可空）：{total, items:[...]}
+Future<Map<String, dynamic>> getLlmLogs(
+  Dio dio, {
+  int page = 0,
+  int size = 20,
+  String? sessionId,
+  String? model,
+  String? routeType,
+  String? status,
+}) async {
+  final q = <String, String>{
+    'page': '$page',
+    'size': '$size',
+    if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
+    if (model != null && model.isNotEmpty) 'model': model,
+    if (routeType != null && routeType.isNotEmpty) 'routeType': routeType,
+    if (status != null && status.isNotEmpty) 'status': status,
+  };
+  final resp = await dio.get<Map<String, dynamic>>('/api/agent/llm-logs',
+      queryParameters: q);
+  return _unwrapData(resp.data);
+}
+
+/// 调用记录聚合统计（groupBy=day|model|routeType|status）：{groups:[...]}
+Future<List<Map<String, dynamic>>> getLlmLogStats(Dio dio,
+    {String groupBy = 'day'}) async {
+  try {
+    final resp = await dio.get<Map<String, dynamic>>('/api/agent/llm-logs/stats',
+        queryParameters: {'groupBy': groupBy});
+    final data = _unwrapData(resp.data);
+    return (data['groups'] as List?)?.cast<Map<String, dynamic>>() ??
+        const [];
+  } on Exception {
+    return const [];
+  }
+}
+
+/// 调用记录详情（含明文内容）：{item: {...}}
+Future<Map<String, dynamic>?> getLlmLogDetail(Dio dio, int id) async {
+  final resp =
+      await dio.get<Map<String, dynamic>>('/api/agent/llm-logs/$id');
+  final data = _unwrapData(resp.data);
+  return data['item'] as Map<String, dynamic>?;
+}
+
 /// 路由规则整体更新（顺序即降级顺序；候选平台必须已注册）。
 /// 返回 {registeredMissing: [...]} —— 本次自动补登记的模型（规则引用未登记模型时）。
 Future<Map<String, dynamic>> updateModelRules(

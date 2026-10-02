@@ -71,6 +71,29 @@ class SystemRepository {
   Future<Map<String, dynamic>> modelRoutingConfig() =>
       net.getModelRoutingConfig(_dio);
 
+  // ---- 大模型调用记录 ----
+
+  Future<Map<String, dynamic>> llmLogs(
+          {int page = 0,
+          int size = 20,
+          String? sessionId,
+          String? model,
+          String? routeType,
+          String? status}) =>
+      net.getLlmLogs(_dio,
+          page: page,
+          size: size,
+          sessionId: sessionId,
+          model: model,
+          routeType: routeType,
+          status: status);
+
+  Future<List<Map<String, dynamic>>> llmLogStats({String groupBy = 'day'}) =>
+      net.getLlmLogStats(_dio, groupBy: groupBy);
+
+  Future<Map<String, dynamic>?> llmLogDetail(int id) =>
+      net.getLlmLogDetail(_dio, id);
+
   Future<Map<String, dynamic>> updateModelRules(
           Map<String, List<String>> rules) =>
       net.updateModelRules(_dio, rules);

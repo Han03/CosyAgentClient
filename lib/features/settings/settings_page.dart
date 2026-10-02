@@ -29,7 +29,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('设置'),
@@ -38,6 +38,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               Tab(text: '连接'),
               Tab(text: '模型管理'),
               Tab(text: '能力中心'),
+              Tab(text: '调用记录'),
               Tab(text: '日志'),
             ],
           ),
@@ -47,6 +48,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             _ConnectionTab(),
             _ModelManagementTab(),
             _CapabilityTab(),
+            _LlmLogsTab(),
             _LogTab(),
           ],
         ),
@@ -2000,4 +2002,266 @@ class _Candidate {
   String model;
 
   _Candidate(this.platform, this.model);
+}
+
+/// 调用记录 Tab：概览统计 + 筛选 + 分页列表 + 明文详情（开发阶段用于排查）。
+class _LlmLogsTab extends ConsumerStatefulWidget {
+  const _LlmLogsTab();
+
+  @override
+  ConsumerState<_LlmLogsTab> createState() => _LlmLogsTabState();
+}
+
+class _LlmLogsTabState extends ConsumerState<_LlmLogsTab> {
+  List<Map<String, dynamic>> _items = [];
+  List<Map<String, dynamic>> _stats = [];
+  int _total = 0;
+  int _page = 0;
+  bool _loading = false;
+  bool _hasMore = true;
+  String _routeType = '';
+  String _status = '';
+  static const _pageSize = 20;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStats();
+    _load(clear: true);
+  }
+
+  Future<void> _loadStats() async {
+    final repo = await ref.read(systemRepositoryProvider.future);
+    final stats = await repo.llmLogStats(groupBy: 'status');
+    if (!mounted) return;
+    setState(() => _stats = stats);
+  }
+
+  Future<void> _load({required bool clear}) async {
+    if (_loading) return;
+    setState(() => _loading = true);
+    try {
+      final repo = await ref.read(systemRepositoryProvider.future);
+      final page = clear ? 0 : _page + 1;
+      final resp = await repo.llmLogs(
+          page: page,
+          size: _pageSize,
+          routeType: _routeType.isEmpty ? null : _routeType,
+          status: _status.isEmpty ? null : _status);
+      final items = (resp['items'] as List?)?.cast<Map<String, dynamic>>() ??
+          const [];
+      if (!mounted) return;
+      setState(() {
+        _items = clear ? items : [..._items, ...items];
+        _total = (resp['total'] as num?)?.toInt() ?? _items.length;
+        _page = page;
+        _hasMore = _items.length < _total;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载调用记录失败：$e')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _showDetail(Map<String, dynamic> item) async {
+    final repo = await ref.read(systemRepositoryProvider.future);
+    final id = (item['id'] as num?)?.toInt() ?? 0;
+    final detail = await repo.llmLogDetail(id) ?? item;
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('调用详情 #$id'
+            ' · ${detail['status'] ?? ''}'),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _kv('模型', detail['chosenModel'] ?? '（全部失败）'),
+                _kv('路由类型', detail['routeType'] ?? ''),
+                _kv('候选链', detail['candidateChain'] ?? ''),
+                _kv('尝试/降级', detail['attempts'] ?? '' == ''
+                    ? '无降级'
+                    : '${detail['attempts']} → ${detail['reasons']}'),
+                _kv('耗时', '${detail['latencyMs']} ms'),
+                _kv('Tokens',
+                    '${detail['promptTokens'] ?? '-'} / ${detail['completionTokens'] ?? '-'} / ${detail['totalTokens'] ?? '-'}'),
+                _kv('会话/任务', '${detail['sessionId'] ?? '-'} / ${detail['taskId'] ?? '-'}'),
+                if (detail['errorMsg'] != null) _kv('错误', detail['errorMsg']),
+                const Divider(height: 24),
+                _kv('输入（明文）', detail['promptContent'] ?? '（未记录）'),
+                _kv('输出（明文）', detail['responseContent'] ?? '（未记录）'),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('关闭')),
+        ],
+      ),
+    );
+  }
+
+  Widget _kv(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: Theme.of(context)
+                  .textTheme
+                  .labelSmall
+                  ?.copyWith(color: Theme.of(context).colorScheme.outline)),
+          const SizedBox(height: 2),
+          SelectableText(value,
+              style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final success = _stats
+        .where((s) => s['group'] == 'SUCCESS')
+        .fold<int>(0, (sum, s) => sum + ((s['calls'] as num?)?.toInt() ?? 0));
+    final failed = _stats
+        .where((s) => s['group'] == 'FAILED')
+        .fold<int>(0, (sum, s) => sum + ((s['calls'] as num?)?.toInt() ?? 0));
+    final totalCalls = success + failed;
+    final okRate = totalCalls == 0
+        ? 0.0
+        : (success * 100 / totalCalls);
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: Column(
+          children: [
+            // 概览卡片（status 分组聚合）
+            Card(
+              margin: const EdgeInsets.all(16),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _metric('总调用', '$totalCalls'),
+                    _metric('成功率', '${okRate.toStringAsFixed(1)}%'),
+                    _metric('失败', '$failed'),
+                    _metric('P95(ms)',
+                        '${_stats.map((s) => (s['p95LatencyMs'] as num?)?.toInt() ?? 0).fold<int>(0, (a, b) => a > b ? a : b)}'),
+                  ],
+                ),
+              ),
+            ),
+            // 筛选行
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  DropdownButton<String>(
+                    value: _routeType.isEmpty ? null : _routeType,
+                    hint: const Text('路由类型'),
+                    items: const [
+                      DropdownMenuItem(value: 'default', child: Text('default')),
+                      DropdownMenuItem(value: 'reasoning', child: Text('reasoning')),
+                    ],
+                    onChanged: (v) {
+                      setState(() => _routeType = v ?? '');
+                      _load(clear: true);
+                    },
+                  ),
+                  const SizedBox(width: 16),
+                  DropdownButton<String>(
+                    value: _status.isEmpty ? null : _status,
+                    hint: const Text('状态'),
+                    items: const [
+                      DropdownMenuItem(value: 'SUCCESS', child: Text('成功')),
+                      DropdownMenuItem(value: 'FAILED', child: Text('失败')),
+                    ],
+                    onChanged: (v) {
+                      setState(() => _status = v ?? '');
+                      _load(clear: true);
+                    },
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: '刷新',
+                    icon: const Icon(Icons.refresh),
+                    onPressed: () {
+                      _loadStats();
+                      _load(clear: true);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            // 分页列表
+            Expanded(
+              child: _items.isEmpty && !_loading
+                  ? const Center(child: Text('暂无调用记录（真实模型调用后出现）'))
+                  : ListView.builder(
+                      itemCount: _items.length + (_hasMore ? 1 : 0),
+                      itemBuilder: (context, i) {
+                        if (i >= _items.length) {
+                          // 触底加载更多
+                          WidgetsBinding.instance
+                              .addPostFrameCallback((_) => _load(clear: false));
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(
+                                child: CircularProgressIndicator(strokeWidth: 2)),
+                          );
+                        }
+                        final item = _items[i];
+                        final status = item['status'] ?? '';
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(
+                            status == 'SUCCESS'
+                                ? Icons.check_circle_outline
+                                : Icons.error_outline,
+                            color: status == 'SUCCESS'
+                                ? Colors.green
+                                : theme.colorScheme.error,
+                          ),
+                          title: Text(
+                              '${item['chosenModel'] ?? '（全部失败）'} · ${item['routeType'] ?? ''}'),
+                          subtitle: Text(
+                              '${item['startedAt'] ?? ''} · ${item['latencyMs']}ms · ${item['sessionId'] ?? ''}'),
+                          trailing: const Icon(Icons.chevron_right, size: 18),
+                          onTap: () => _showDetail(item),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _metric(String label, String value) {
+    return Column(
+      children: [
+        Text(value,
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(color: Theme.of(context).colorScheme.primary)),
+        Text(label, style: Theme.of(context).textTheme.labelSmall),
+      ],
+    );
+  }
 }
